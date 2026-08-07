@@ -73,8 +73,6 @@ flutter:
     - assets/models/model.tflite
     - assets/models/yolo26n-depth.tflite
     - assets/labels/labels.txt
-    - assets/kokoro-v1.0.onnx
-    - assets/voices.json
   # assets:
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
