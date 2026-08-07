@@ -1,0 +1,11 @@
+This project uses the Ultralytics YOLO26n-depth model, which is
+licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+The original model and its source code can be found at:
+https://github.com/ultralytics/ultralytics
+
+For the full license text, see the LICENSE file in this repository
+or visit: https://www.gnu.org/licenses/agpl-3.0.txt
+
+All modifications to the model and integration code in this project
+are also licensed under AGPL-3.0, in compliance with the original license.
