@@ -53,22 +53,41 @@
 
 ## 📁 هيكل المشروع
 lib/
-├── core/ # الثوابت والإعدادات العامة
-│ └── constants.dart
-├── features/
-│ ├── detection/ # ميزة الكشف عن الأشياء
-│ │ ├── models/ # نماذج البيانات (DetectedObject)
-│ │ ├── presentation/ # واجهة المستخدم (DetectionScreen)
-│ │ │ └── widgets/ # مكونات واجهة الكشف
-│ │ └── services/ # الخدمات (DetectorService, DepthService, FrameConverter)
-│ └── training/ # ميزة التدريب وجمع البيانات
-│ ├── models/ # نماذج البيانات (all_models_freezed)
-│ ├── presentation/ # واجهة المستخدم (TrainingScreen)
-│ └── services/ # الخدمات (TrainingServer)
-└── voice/ # النظام الصوتي
-├── data/ # البيانات (الترجمة العربية)
-└── services/ # الخدمات (TTS, VoiceAnnouncer)   
-
+├── core/                                 # الثوابت والإعدادات العامة
+│   └── constants.dart
+│
+├── features/                             # الميزات الرئيسية
+│   │
+│   ├── detection/                        # ميزة الكشف عن الأشياء
+│   │   ├── models/                       # نماذج البيانات
+│   │   │   └── detected_object.dart
+│   │   ├── presentation/                 # واجهة المستخدم
+│   │   │   ├── detection_screen.dart
+│   │   │   └── widgets/                  # مكونات واجهة الكشف
+│   │   │       ├── bounding_box_painter.dart
+│   │   │       └── detection_chips_bar.dart
+│   │   └── services/                     # الخدمات
+│   │       ├── detector_service.dart
+│   │       ├── depth_service.dart
+│   │       ├── frame_converter.dart
+│   │       └── object_memory_service.dart
+│   │
+│   └── training/                         # ميزة التدريب وجمع البيانات
+│       ├── models/                       # نماذج البيانات
+│       │   └── all_models_freezed.dart
+│       ├── presentation/                 # واجهة المستخدم
+│       │   ├── training_screen.dart
+│       │   └── training_functions.dart
+│       └── services/                     # الخدمات
+│           └── training_server.dart
+│
+└── voice/                                # النظام الصوتي
+    ├── data/                             # البيانات
+    │   └── labels_ar.dart                # الترجمة العربية
+    └── services/                         # الخدمات
+        ├── tts_adapter.dart
+        ├── flutter_tts_adapter.dart
+        └── voice_announcer.dart
 
 ---
 
