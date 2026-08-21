@@ -2,6 +2,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     <application
+        android:usesCleartextTraffic="true"
         android:label="projctlitgudei"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

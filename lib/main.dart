@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'features/detection/presentation/detection_screen.dart';
 
-late List<CameraDescription> cameras;
+late List<CameraDescription>? cameras;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +20,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
-      home: DetectionScreen(cameras: cameras),
+      home: DetectionScreen(cameras: cameras!),
     );
   }
 }

@@ -1,37 +1,62 @@
-/// ثوابت عامة للمشروع كامل — أي رقم أو مسار يُحتمل نغيّره لاحقًا
-/// يُكتب هون بس، وباقي الكود يستورده بدل ما يكرره بكل مكان.
+/// ثوابت عامة للمشروع كامل.
 class AppConstants {
   AppConstants._();
 
-  // ---------------- الموديل ----------------
+  // ---------------- ذاكرة الأجسام ----------------
+  /// أقصى فرق مسموح بين بصمتين حتى نعتبرهما نفس الجسم.
 
-  /// مسار ملف الموديل داخل assets (بعد التصدير لصيغة tflite)
-  static const String modelPath = 'assets/models/yolo26n-depth.tflite';
+  /// أقل ثقة مقبولة للكشف.
+  static const double confidenceThreshold = 0.40;
 
-  /// مسار ملف أسماء الفئات (كل سطر = اسم فئة بترتيب مطابق لمخلم رجات الموديل)
+  /// عتبة تداخل المربعات.
+  static const double iouThreshold = 0.45;
+
+  /// تحليل إطار واحد من كل إطارين.
+  static const int frameSkip = 2;
+
+  static const double memoryMatchThreshold = 0.16;
+
+  // ---------------- الموديلات ----------------
+
+  /// موديل كشف الأشياء والمربعات.
+  static const String detectionModelPath = 'assets/models/model.tflite';
+
+  /// اسم قديم للمحافظة على التوافق مع أي كود يستخدم modelPath.
+  static const String modelPath = detectionModelPath;
+
+  /// موديل خريطة العمق.
+  static const String depthModelPath = 'assets/models/yolo26n-depth.tflite';
+
+  /// أسماء الفئات.
   static const String labelsPath = 'assets/labels/labels.txt';
 
-  /// حجم الإدخال المتوقع للموديل (عرض × ارتفاع بالبكسل). القيمة الشائعة
-  /// لموديلات YOLO المصدَّرة هي 320 أو 640 — تأكد من مطابقتها لموديلك.
+  /// حجم صورة الإدخال للموديلين.
   static const int modelInputSize = 320;
-
-  /// أقل نسبة ثقة نقبل بها كنتيجة كشف صحيحة (0.0 - 1.0)
-  static const double confidenceThreshold = 0.5;
-
-  /// عتبة تداخل المربعات المستخدمة بخوارزمية NMS لإزالة المربعات المكرّرة
-  static const double iouThreshold = 0.45;
 
   // ---------------- الأداء ----------------
 
-  /// إرسال إطار واحد من كل عدة إطارات للتحليل، لتخفيف الحمل على المعالج
-  static const int frameSkip = 2;
+  // ---------------- تحسين التتبع والأداء ----------------
+
+  /// تشغيل موديل العمق كل عدد معين من الإطارات.
+  static const int depthFrameInterval = 10;
+
+  /// إبقاء آخر نتيجة ظاهرة إذا فشل الكشف مؤقتًا.
+  static const int detectionHoldFrames = 8;
+
+  /// نسبة نعومة حركة المربع.
+  static const double detectionSmoothing = 0.65;
 
   // ---------------- الصوت ----------------
 
-  /// أقل مدة (بالثواني) قبل ما نسمح بإعادة نطق نفس الجسم من جديد،
-  /// حتى لو اختفى وظهر بسرعة (يمنع التكرار المزعج)
+  /// المدة بين تكرار نطق نفس الجسم.
   static const int voiceCooldownSeconds = 4;
 
-  /// هل الصوت مفعّل افتراضيًا عند فتح التطبيق
+  /// تشغيل الصوت افتراضيًا.
   static const bool voiceEnabledByDefault = true;
+
+  // ==================== Backend Server ====================
+  static const String serverBaseUrl = 'http://192.168.43.165:5000';
+  static const String uploadEndpoint = '/upload';
+  static const String trainEndpoint = '/train';
+  static const String downloadModelEndpoint = '/download_model';
 }

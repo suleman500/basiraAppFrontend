@@ -41,7 +41,7 @@ class BoundingBoxPainter extends CustomPainter {
       canvas.drawRect(rect, boxPaint);
 
       final label = labelTranslator(obj.label);
-      final text = '${obj.label} ${obj.distance.toStringAsFixed(1)}m';
+      final text = '$label ${obj.distance.toStringAsFixed(1)}m';
       final textPainter = TextPainter(
         text: TextSpan(
           text: text,
