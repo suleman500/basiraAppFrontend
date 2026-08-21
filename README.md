@@ -87,3 +87,55 @@ lib/
    ```bash
    git clone https://github.com/suleman500/basiraAppFrontend.git
    cd basiraAppFrontend
+
+
+   r:
+
+bash
+flutter pub get
+تحميل نماذج YOLO (إن لم تكن موجودة في assets/models/):
+
+قم بتحميل النماذج من الرابط المرفق (أو من Roboflow/Ultralytics).
+
+ضعها في مجلد assets/models/.
+
+تشغيل التطبيق:
+
+bash
+flutter run
+(اختياري) تشغيل الخادم الخلفي (للتدريب):
+
+انتقل إلى مجلد training_server.
+
+ثبّت المتطلبات: pip install -r requirements.txt.
+
+شغّل الخادم: python run.py. 
+
+
+ ترخيص المشروع
+هذا المشروع مرخَّص تحت رخصة AGPL-3.0 (GNU Affero General Public License v3.0).
+
+أنت حر في استخدام الكود وتعديله وتوزيعه.
+
+الشرط الأساسي: عند توزيع التطبيق أو أي نسخة معدلة منه، يجب أن تفتح مصدر الكود بالكامل تحت نفس الرخصة.
+
+لمزيد من التفاصيل، راجع ملف LICENSE في جذر المشروع.
+
+
+
+
+
+---
+
+## ✅ **كيف تضيف هذا الملف إلى مشروعك؟**
+
+1. **انسخ النص من الأعلى** (من أول `# تطبيق البصيرة` إلى آخر `للجميع.`).
+2. **افتح** مفكرة (Notepad) أو أي محرر نصوص.
+3. **الصق النص**.
+4. **احفظ** الملف باسم `README.md` في **جذر مشروعك** (نفس مكان `pubspec.yaml`).
+5. **ارفع الملف إلى GitHub**:
+   ```bash
+   git add README.md
+   git commit -m "إضافة ملف README بالعربية"
+   git push
+   
