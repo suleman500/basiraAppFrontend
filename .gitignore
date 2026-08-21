@@ -10,7 +10,9 @@
 .history
 .svn/
 .swiftpm/
+.vscode/mcp.json
 migrate_working_dir/
+
 
 # IntelliJ related
 *.iml
