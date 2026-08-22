@@ -1,17 +1,145 @@
-# projctlitgudei
+# تطبيق البصيرة - المرشد الذكي للمكفوفين (نسخة تطويرية)
 
-A new Flutter project.
+![Flutter](https://img.shields.io/badge/Flutter-3.24-blue)
+![Dart](https://img.shields.io/badge/Dart-3.5-blue)
+![License](https://img.shields.io/badge/License-AGPL--3.0-green)
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## 📖 نظرة عامة
 
-A few resources to get you started if this is your first Flutter project:
+**تطبيق البصيرة** هو تطبيق هاتف ذكي (Android) يهدف إلى مساعدة المكفوفين وضعاف البصر على التنقل وفهم محيطهم باستخدام تقنيات الذكاء الاصطناعي والرؤية الحاسوبية.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+> ⚠️ **تنبيه مهم**: هذا الإصدار هو **نسخة تطويرية (Development Version)**. قد يحتوي على بعض الأخطاء أو الميزات غير المكتملة. يُستخدم لأغراض الاختبار والتطوير فقط، وليس للإنتاج النهائي.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## 🎯 الميزات الرئيسية
+
+### ✅ الميزات المُنفَّذة حالياً
+
+- **كشف الأشياء في الوقت الفعلي**: باستخدام نموذج YOLO11n (محلياً على الجهاز، بدون إنترنت).
+- **تقدير العمق والمسافات**: عبر نموذج YOLO26n-depth (محلياً).
+- **نظام صوتي ذكي**: ينطق أسماء الأشياء المكتشفة بالعربية أو الإنجليزية، مع منع التكرار (Cooldown).
+- **ذاكرة الكائنات**: يتذكر الأشياء التي رآها سابقاً ويتعرف عليها عند ظهورها مجدداً.
+- **واجهة تدريب متكاملة** (للمسؤول فقط): تسمح برفع الصور وتصنيفها (Bounding Boxes) وتدريب نموذج YOLO مخصص عبر Roboflow.
+- **تحرير المربعات باللمس**: تحريك، تكبير/تصغير المربعات المحيطة (Bounding Boxes) بإيماءات اللمس.
+- **دعم اللغة العربية**: واجهة المستخدم والنطق الصوتي بالعربية بالكامل (مع دعم الإنجليزية).
+- **الثيم المظلم (Dark Mode)**: واجهة عالية التباين مناسبة لضعاف البصر.
+
+### 🔮 الميزات المخطط لها (قيد التطوير)
+
+- توجيه صوتي تفاعلي عبر Gemini API (وصف المشهد، إرشادات).
+- دعم الأوامر الصوتية.
+- تحسين دقة تقدير المسافات.
+- دعم النظارات الذكية (القابلة للارتداء).
+
+---
+
+## 🛠️ التقنيات المستخدمة
+
+| التقنية | الغرض |
+| :--- | :--- |
+| **Flutter & Dart** | تطوير واجهة المستخدم والتطبيق بالكامل. |
+| **YOLO11n** | كشف الأشياء في الوقت الفعلي (محلياً). |
+| **YOLO26n-depth** | تقدير العمق والمسافات (محلياً). |
+| **TFLite Flutter** | تشغيل نماذج YOLO على الهاتف. |
+| **Flutter TTS** | تحويل النص إلى كلام (نطق الأسماء). |
+| **Gemini API** | (للوصف والقراءة عند الطلب، يتطلب إنترنت). |
+| **Roboflow** | تدريب نموذج YOLO المخصص (خادم خلفي). |
+| **Flask (Python)** | خادم وسيط للتواصل مع Roboflow. |
+
+---
+
+## 📁 هيكل المشروع
+lib/
+├── core/                                 # الثوابت والإعدادات العامة
+│   └── constants.dart
+│
+├── features/                             # الميزات الرئيسية
+│   │
+│   ├── detection/                        # ميزة الكشف عن الأشياء
+│   │   ├── models/                       # نماذج البيانات
+│   │   │   └── detected_object.dart
+│   │   ├── presentation/                 # واجهة المستخدم
+│   │   │   ├── detection_screen.dart
+│   │   │   └── widgets/                  # مكونات واجهة الكشف
+│   │   │       ├── bounding_box_painter.dart
+│   │   │       └── detection_chips_bar.dart
+│   │   └── services/                     # الخدمات
+│   │       ├── detector_service.dart
+│   │       ├── depth_service.dart
+│   │       ├── frame_converter.dart
+│   │       └── object_memory_service.dart
+│   │
+│   └── training/                         # ميزة التدريب وجمع البيانات
+│       ├── models/                       # نماذج البيانات
+│       │   └── all_models_freezed.dart
+│       ├── presentation/                 # واجهة المستخدم
+│       │   ├── training_screen.dart
+│       │   └── training_functions.dart
+│       └── services/                     # الخدمات
+│           └── training_server.dart
+│
+└── voice/                                # النظام الصوتي
+    ├── data/                             # البيانات
+    │   └── labels_ar.dart                # الترجمة العربية
+    └── services/                         # الخدمات
+        ├── tts_adapter.dart
+        ├── flutter_tts_adapter.dart
+        └── voice_announcer.dart
+
+---
+
+## 🚀 كيفية تشغيل المشروع (للمطورين)
+
+### 1️⃣ المتطلبات الأساسية
+
+- **Flutter SDK**: الإصدار 3.24 أو أحدث.
+- **Android Studio**: 2024.1 أو أحدث (مع Flutter plugin).
+- **هاتف أندرويد**: API 29 (Android 10) أو أحدث، مع كاميرا خلفية.
+- **اتصال بالإنترنت**: (لبعض الميزات مثل Gemini API و Roboflow).
+
+### 2️⃣ خطوات التشغيل
+
+1. **استنساخ المستودع**:
+   ```bash
+   git clone https://github.com/suleman500/basiraAppFrontend.git
+   cd basiraAppFrontend
+
+
+   r:
+
+bash
+flutter pub get
+تحميل نماذج YOLO (إن لم تكن موجودة في assets/models/):
+
+قم بتحميل النماذج من الرابط المرفق (أو من Roboflow/Ultralytics).
+
+ضعها في مجلد assets/models/.
+
+تشغيل التطبيق:
+
+bash
+flutter run
+(اختياري) تشغيل الخادم الخلفي (للتدريب):
+
+انتقل إلى مجلد training_server.
+
+ثبّت المتطلبات: pip install -r requirements.txt.
+
+شغّل الخادم: python run.py. 
+
+
+ ترخيص المشروع
+هذا المشروع مرخَّص تحت رخصة AGPL-3.0 (GNU Affero General Public License v3.0).
+
+أنت حر في استخدام الكود وتعديله وتوزيعه.
+
+الشرط الأساسي: عند توزيع التطبيق أو أي نسخة معدلة منه، يجب أن تفتح مصدر الكود بالكامل تحت نفس الرخصة.
+
+لمزيد من التفاصيل، راجع ملف LICENSE في جذر المشروع.
+
+
+
+
