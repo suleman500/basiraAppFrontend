@@ -628,19 +628,7 @@ class _DetectionScreenState
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black87,
-        actions: [
-          IconButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const TrainingScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.model_training),
-            tooltip: 'Training',
-          ),
-        ],
+        
       ),
       body: SafeArea(
         child: Column(
