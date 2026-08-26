@@ -105,8 +105,21 @@ class _DetectionScreenState
 
   Future<void> _initialize() async {
     try {
+      // موديل الكشف إجباري — لو فشل، نوقف التطبيق ونعرض الخطأ.
       await _detector.load();
-      await _depth.load();
+
+      // موديل العمق أصبح اختياريًا (يعمل عند الطلب فقط حسب الخطة
+      // الجديدة). لو ملفه غير موجود بعد (مثلًا لسا ما أضفت MiDaS)،
+      // لا نوقف التطبيق بالكامل — نكمل بدون قياس مسافة مؤقتًا.
+      try {
+        await _depth.load();
+      } catch (e) {
+        debugPrint(
+          'تعذّر تحميل موديل العمق (سيعمل التطبيق بدون قياس '
+          'المسافة لغاية إضافة الملف): $e',
+        );
+      }
+
       await _voice.init();
       await memory.init();
 

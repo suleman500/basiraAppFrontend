@@ -53,6 +53,12 @@ class VoiceAnnouncer {
 
     final now = DateTime.now();
 
+    // نمرّ على كل الأجسام المكتشفة (وليس أولها فقط) وننطق كل جسم انتهت
+    // فترة انتظاره، الواحد تلو الآخر. الترتيب السابق كان يوقف الحلقة
+    // (break) بعد أول جسم يستاهل النطق — وبما إن نتائج الكشف مرتَّبة
+    // دائمًا حسب الثقة تنازليًا، كان هذا يعني إن أعلى جسم ثقة (مثل
+    // الحاسوب المحمول) يحتكر النطق دائمًا، وأجسام تانية ثابتة بنفس
+    // المكان (كوب، فأرة) ما توصلها الحلقة أبدًا.
     for (final obj in detections) {
       final key = obj.trackingKey;
       final lastTime = _lastAnnouncedAt[key];
@@ -63,14 +69,13 @@ class VoiceAnnouncer {
       if (shouldAnnounce) {
         _lastAnnouncedAt[key] = now;
         await _speak(_buildSentence(obj.label));
-        break;
       }
     }
   }
 
   String _buildSentence(String englishLabel) {
     if (_language == SpeechLanguage.arabic) {
-      return 'أرى ${toArabicLabel(englishLabel)} أمامك';
+      return 'يوجد أمامك ${toArabicLabel(englishLabel)}';
     }
     return 'I see a $englishLabel in front of you';
   }

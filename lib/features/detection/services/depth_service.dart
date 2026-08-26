@@ -31,7 +31,7 @@ class DepthMap {
   }
 }
 
-/// خدمة تشغيل موديل yolo26n-depth.tflite.
+/// 00خدمة تشغيل موديل yolo26n-depth.tflite.
 class DepthService {
   Interpreter? _interpreter;
   IsolateInterpreter? _isolateInterpreter;
