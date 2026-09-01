@@ -75,7 +75,7 @@ class VoiceAnnouncer {
 
   String _buildSentence(String englishLabel) {
     if (_language == SpeechLanguage.arabic) {
-      return 'يوجد أمامك ${toArabicLabel(englishLabel)}';
+      return 'أرى ${toArabicLabel(englishLabel)} أمامك';
     }
     return 'I see a $englishLabel in front of you';
   }
@@ -89,6 +89,14 @@ class VoiceAnnouncer {
     } finally {
       _isSpeaking = false;
     }
+  }
+
+  /// نطق مباشر لرسالة نظام (نتيجة قياس مسافة، رسالة خطأ...) — بدون
+  /// المرور بمنطق cooldown الخاص بتتبّع الأجسام، لأنها ليست إعلانًا عن
+  /// جسم مكتشَف بل رسالة صريحة بطلب من المستخدم أو النظام.
+  Future<void> speakNow(String text) async {
+    if (!enabled) return;
+    await _speak(text);
   }
 
   Future<void> dispose() async {

@@ -3,15 +3,17 @@ import 'package:flutter/material.dart';
 import '../../models/detected_object.dart';
 
 /// شريط أسفل الشاشة يعرض بطاقة صغيرة لكل جسم مكتشف حاليًا، مع اسمه
-/// العربي ونسبة الثقة.
+/// العربي ونسبة الثقة (وتصنيف القرب النسبي لو تم قياس المسافة).
 class DetectionChipsBar extends StatelessWidget {
   final List<DetectedObject> detections;
   final String Function(String englishLabel) labelTranslator;
+  final Map<String, String> proximityLabels;
 
   const DetectionChipsBar({
     super.key,
     required this.detections,
     required this.labelTranslator,
+    this.proximityLabels = const {},
   });
 
   @override
@@ -34,9 +36,13 @@ class DetectionChipsBar extends StatelessWidget {
           runSpacing: 4,
           children: detections.map((obj) {
             final label = labelTranslator(obj.label);
+            final proximity = proximityLabels[obj.label];
+            final text = proximity != null
+                ? '$label (${(obj.confidence * 100).toStringAsFixed(0)}%) · $proximity'
+                : '$label (${(obj.confidence * 100).toStringAsFixed(0)}%)';
             return Chip(
               label: Text(
-                '$label (${(obj.confidence * 100).toStringAsFixed(0)}%)',
+                text,
                 style: const TextStyle(fontSize: 11),
               ),
               backgroundColor: Colors.teal.shade700,

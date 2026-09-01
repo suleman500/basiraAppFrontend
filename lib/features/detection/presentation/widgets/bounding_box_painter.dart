@@ -11,11 +11,18 @@ class BoundingBoxPainter extends CustomPainter {
   final int imageHeight;
   final String Function(String englishLabel) labelTranslator;
 
+  /// تصنيف القرب النسبي لكل جسم (trackingKey -> "قريب جدًا"...)، يُحدَّث
+  /// فقط بعد طلب قياس مسافة صريح من المستخدم (راجع _announceProximity
+  /// بـ detection_screen.dart). لو الجسم مو موجود بالخريطة، ما نعرض له
+  /// أي نص مسافة — لأنه ما انقاس بعد.
+  final Map<String, String> proximityLabels;
+
   BoundingBoxPainter({
     required this.detections,
     required this.imageWidth,
     required this.imageHeight,
     required this.labelTranslator,
+    this.proximityLabels = const {},
   });
 
   @override
@@ -41,7 +48,8 @@ class BoundingBoxPainter extends CustomPainter {
       canvas.drawRect(rect, boxPaint);
 
       final label = labelTranslator(obj.label);
-      final text = '$label ${obj.distance.toStringAsFixed(1)}m';
+      final proximity = proximityLabels[obj.label];
+      final text = proximity != null ? '$label · $proximity' : label;
       final textPainter = TextPainter(
         text: TextSpan(
           text: text,
@@ -61,6 +69,7 @@ class BoundingBoxPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant BoundingBoxPainter oldDelegate) {
-    return oldDelegate.detections != detections;
+    return oldDelegate.detections != detections ||
+        oldDelegate.proximityLabels != proximityLabels;
   }
 }
