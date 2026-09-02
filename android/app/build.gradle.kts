@@ -43,3 +43,6 @@ kotlin {
 flutter {
     source = "../.."
 }
+dependencies {
+    compileOnly("org.tensorflow:tensorflow-lite:2.14.0")
+}
