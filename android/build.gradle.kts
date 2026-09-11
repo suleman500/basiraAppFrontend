@@ -21,6 +21,14 @@ subprojects {
 subprojects {
     afterEvaluate {
         extensions.findByType(com.android.build.gradle.BaseExtension::class.java)?.apply {
+            // ⚠️ حزم Flutter قديمة (زي vosk_flutter_2) ما بتحدد "namespace"
+            // بملف build.gradle الخاص فيها، وهذا مطلوب إجباريًا من AGP
+            // الحديث. هذا السطر يحقن namespace تلقائيًا (من "group" الحزمة)
+            // لو كانت غير محددة، بدون الحاجة لتعديل ملفات الحزمة نفسها.
+            if (namespace == null) {
+                namespace = project.group.toString()
+            }
+
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17

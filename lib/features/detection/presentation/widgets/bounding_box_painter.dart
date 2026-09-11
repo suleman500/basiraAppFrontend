@@ -17,12 +17,18 @@ class BoundingBoxPainter extends CustomPainter {
   /// أي نص مسافة — لأنه ما انقاس بعد.
   final Map<String, String> proximityLabels;
 
+  /// trackingKey تبع الجسم "الملموس" حاليًا بإيد المستخدم (لو موجود) —
+  /// يُرسَم بلون أخضر بدل الأحمر العادي، ليعطي إشارة بصرية واضحة إنه
+  /// هو الجسم المختار حاليًا.
+  final String? touchedKey;
+
   BoundingBoxPainter({
     required this.detections,
     required this.imageWidth,
     required this.imageHeight,
     required this.labelTranslator,
     this.proximityLabels = const {},
+    this.touchedKey,
   });
 
   @override
@@ -32,12 +38,15 @@ class BoundingBoxPainter extends CustomPainter {
     final scaleX = size.width / imageWidth;
     final scaleY = size.height / imageHeight;
 
-    final boxPaint = Paint()
-      ..color = Colors.redAccent
-      ..strokeWidth = 2.5
-      ..style = PaintingStyle.stroke;
-
     for (final obj in detections) {
+      final isTouched =
+          touchedKey != null && obj.trackingKey == touchedKey;
+
+      final boxPaint = Paint()
+        ..color = isTouched ? Colors.greenAccent : Colors.redAccent
+        ..strokeWidth = isTouched ? 3.5 : 2.5
+        ..style = PaintingStyle.stroke;
+
       final rect = Rect.fromLTRB(
         obj.box.left * scaleX,
         obj.box.top * scaleY,
@@ -53,10 +62,11 @@ class BoundingBoxPainter extends CustomPainter {
       final textPainter = TextPainter(
         text: TextSpan(
           text: text,
-          style: const TextStyle(
+          style: TextStyle(
             color: Colors.white,
             fontSize: 12,
-            backgroundColor: Colors.black54,
+            backgroundColor:
+            isTouched ? Colors.green.shade700 : Colors.black54,
           ),
         ),
         textDirection: TextDirection.rtl,
@@ -70,6 +80,7 @@ class BoundingBoxPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant BoundingBoxPainter oldDelegate) {
     return oldDelegate.detections != detections ||
-        oldDelegate.proximityLabels != proximityLabels;
+        oldDelegate.proximityLabels != proximityLabels ||
+        oldDelegate.touchedKey != touchedKey;
   }
 }

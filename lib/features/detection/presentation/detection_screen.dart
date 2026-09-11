@@ -7,13 +7,18 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import '../../../core/constants.dart';
 import '../../voice/data/labels_ar.dart';
 import '../../voice/services/voice_announcer.dart';
+
 import '../models/detected_object.dart';
 import '../services/depth_service.dart';
 import '../services/detector_service.dart';
+import '../services/hand_tracker_service.dart';
 import '../services/native_detector_service.dart';
 import '../services/frame_converter.dart';
 import '../services/gyroscope_service.dart';
+import '../services/speech_service.dart';
+import '../services/voice_command_parser.dart';
 import 'widgets/bounding_box_painter.dart';
+import 'widgets/hand_skeleton_painter.dart';
 import 'widgets/detection_chips_bar.dart';
 import 'dart:math' as math;
 import '../services/object_memory_service.dart';
@@ -22,66 +27,46 @@ import '../../training/presentation/training_screen.dart';
 class DetectionScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
 
-  const DetectionScreen({
-    super.key,
-    required this.cameras,
-  });
+  const DetectionScreen({super.key, required this.cameras});
 
   @override
   State<DetectionScreen> createState() => _DetectionScreenState();
 }
 
-class _DetectionScreenState
-    extends State<DetectionScreen>
+class _DetectionScreenState extends State<DetectionScreen>
     with SingleTickerProviderStateMixin {
   CameraController? _controller;
 
   DepthMap? _lastDepthMap;
 
-  final ObjectMemoryService memory =
-  ObjectMemoryService();
+  final ObjectMemoryService memory = ObjectMemoryService();
   int _missingDetectionFrames = 0;
   int _processedFrameCounter = 0;
-  // 🔀 نقطة التبديل الوحيدة — dynamic هون عمدًا (بدل DetectorService)
-  // حتى نقدر نستخدم NativeDetectorService الجديد بدون أي تعديل على
-  // detector_service.dart الأصلي. القديم يبقى بالضبط زي ما هو.
   final dynamic _detector = AppConstants.useNativeDetector
       ? NativeDetectorService()
       : DetectorService();
   final DepthService _depth = DepthService();
   final VoiceAnnouncer _voice = VoiceAnnouncer();
   final GyroscopeService _gyro = GyroscopeService();
+  final HandTrackerService _handTracker = HandTrackerService();
+  late final SpeechService _speech = SpeechService(onText: _onSpeechText);
 
-  /// "الهدف" — آخر نتيجة كشف وصلت من الموديل (يتحدّث بس كل ما يخلص
-  /// الموديل إطار جديد، يعني أقصى تقدير كل ~1/15 ثانية).
+  bool _isListeningForCommand = false;
+  bool _micPressActive = false;
+  int _micGestureId = 0;
+  String _recognizedSpeechText = '';
+
   List<DetectedObject> _detections = [];
 
-  // ---------------- تحريك سلس للمربعات (نفس تقنية النقطة المضيئة
-  // بـ basira_home_screen.dart) ----------------
-  // بدل ما ينتظر المربع كل تحديث من الموديل (بطيء نسبيًا، يعطي إحساس
-  // "قفزات")، Ticker مستقل يشتغل بمعدل تحديث الشاشة (~60 مرة بالثانية)
-  // ويحسب موقع وسيط بين آخر موضع معروض وآخر "هدف" من الموديل باستمرار
-  // — فيصير المربع يتحرك بسلاسة بدل ما يقفز، وبسرعة يلحق أي تحديث جديد
-  // فور وصوله، بغض النظر عن سرعة الموديل نفسه.
   late final Ticker _boxAnimationTicker;
 
-  /// "المعروض فعليًا" — الموضع المتحرّك بسلاسة نحو _detections. مغلّف
-  /// بـ ValueNotifier (زي _glowPosition بالضبط) حتى يعيد رسم صندوق
-  /// الرسم بس (CustomPaint)، مو الشاشة كاملة، كل تِك.
   final ValueNotifier<List<DetectedObject>> _animatedDetections =
-  ValueNotifier<List<DetectedObject>>([]);
+      ValueNotifier<List<DetectedObject>>([]);
 
   Duration? _lastAnimationTickElapsed;
 
-  /// عدّاد الإطارات المتتالية اللي ظهر فيها كل جسم (بهويته trackingKey).
-  /// يُستخدم فلتر استقرار قبل النطق — يمنع نطق كشوفات وهمية لحظية
-  /// ناتجة عن ضبابية حركة الكاميرا السريعة (motion blur)، بدون ما
-  /// يأثر على سرعة ظهور المربع البصري نفسه.
   final Map<String, int> _detectionStreak = {};
 
-  /// نص وصف القرب النسبي الحالي لكل جسم (id الجسم -> "قريب جدًا"...).
-  /// يُحدَّث فقط بعد طلب قياس مسافة صريح، ويُمسح لما يتغيّر المشهد
-  /// (نتوقف أو نبدّل كاميرا) لأنه لا معنى له بدون خريطة عمق حديثة.
   Map<String, String> _proximityLabels = {};
 
   int _imageWidth = 0;
@@ -94,25 +79,11 @@ class _DetectionScreenState
   bool _isProcessingFrame = false;
   String? _error;
 
-  // ---------------- قياس المسافة عند الطلب (On-Demand) ----------------
-  // خلافًا للتصميم القديم (تشغيل موديل العمق تلقائيًا كل عدة إطارات)،
-  // موديل العمق الآن يعمل فقط لما المستخدم يضغط زر "ما المسافة؟"
-  // صراحة. _depthRequested يُرفَع من زر الواجهة، ويُلتقَط ويُنفَّذ داخل
-  // _processFrame (لأنه المكان الوحيد اللي عندنا فيه وصول للإطار الخام
-  // من الكاميرا)، ثم يرجع false فورًا حتى ما يتكرر كل إطار.
   bool _depthRequested = false;
   bool _isMeasuringDistance = false;
 
-  // ---------------- وضع التوجيه (Navigation Mode) ----------------
-  /// اسم الفئة (label بالإنجليزي، زي ما يرجّعه الموديل) اللي المستخدم
-  /// يوجّه نحوها حاليًا، أو null لو ما في توجيه شغّال.
   String? _navigationTargetLabel;
 
-  /// هوية الجسم المحدَّد بالضبط (trackingKey = memoryId عادةً، بصمة
-  /// بصرية دائمة من object_memory_service). هذا هو المفتاح الحقيقي
-  /// اللي يمنع الالتباس لو في أكتر من جسم بنفس التسمية بالمشهد (مثلًا
-  /// كرسيّين) — بدون هذا، الكود كان بس يلاحق "أكبر صندوق بنفس
-  /// التسمية" كل إطار، فممكن يتقفز بين الكرسيين لو تقاربوا بالحجم.
   String? _navigationTargetId;
 
   bool get _isNavigating => _navigationTargetLabel != null;
@@ -120,6 +91,20 @@ class _DetectionScreenState
   DateTime? _lastNavigationAnnounce;
   DateTime? _lastObstacleWarning;
   DateTime? _lastLostAnnounce;
+
+  String? _touchedObjectKey;
+
+  DateTime? _lastTouchTriggerAt;
+
+  bool _wasFistLastFrame = false;
+
+  List<HandLandmark> _handPointsForDisplay = [];
+  bool _isFistForDisplay = false;
+
+  List<HandLandmark> _lastRawHandLandmarks = [];
+
+  final ValueNotifier<List<HandLandmark>> _animatedHandPoints =
+      ValueNotifier<List<HandLandmark>>([]);
 
   @override
   void initState() {
@@ -130,46 +115,25 @@ class _DetectionScreenState
     _initialize();
   }
 
-
-
-  /// يُستدعى ~60 مرة بالثانية (بمعدل تحديث الشاشة). لكل جسم بالهدف
-  /// الحالي (_detections)، يحسب موقع وسيط بين آخر موضع معروض فعليًا
-  /// وموقع الهدف — بنفس أسلوب smoothing المستقل عن معدل الإطارات
-  /// (framerate-independent) المستخدم بـ basira_home_screen.dart.
-  ///
-  /// الفرق عن smoothing الموديل (AppConstants.detectionSmoothing):
-  /// ذاك يشتغل مرة وحدة كل ما الموديل يرجّع نتيجة جديدة (بطيء نسبيًا).
-  /// هذا يشتغل باستمرار 60 مرة بالثانية بغض النظر عن سرعة الموديل —
-  /// فيصير المربع "يزحف" بسلاسة نحو آخر هدف معروف، بدل ما يقفز إليه
-  /// دفعة وحدة بالتحديث التالي من الموديل.
   void _onBoxAnimationTick(Duration elapsed) {
     final previousElapsed = _lastAnimationTickElapsed;
     _lastAnimationTickElapsed = elapsed;
 
     if (previousElapsed == null) return;
 
-    final dtSeconds =
-        (elapsed - previousElapsed).inMicroseconds / 1e6;
+    final dtSeconds = (elapsed - previousElapsed).inMicroseconds / 1e6;
 
     if (dtSeconds <= 0) return;
 
     final targets = _detections;
     final previousAnimated = _animatedDetections.value;
 
-    // ⚡ خروج مبكر: ما في شي نرسمه ولا شي كان مرسوم قبل — أشيَع حالة
-    // (مافي كشف حاليًا، أو التطبيق متوقّف). بدون هذا الخروج، كنا
-    // نخصّص Map وList فاضيين 60 مرة بالثانية بلا داعي طول ما التطبيق
-    // مفتوح — هذا كان مصدر تراكم ذاكرة تدريجي لاحظناه فعليًا بالاختبار.
     if (targets.isEmpty && previousAnimated.isEmpty) return;
 
-    // خريطة سريعة للوصول للموضع المعروض سابقًا بكل جسم عبر هويته.
     final previousByKey = <String, DetectedObject>{
       for (final obj in previousAnimated) obj.trackingKey: obj,
     };
 
-    // معامل التقارب: كل ما زاد، كل ما "لحق" المربع الهدف أسرع.
-    // الصيغة framerate-independent (بعكس lerp بسيط) — نفس النتيجة
-    // بالضبط سواء الشاشة تحدّث 30 أو 60 أو 120 مرة بالثانية.
     final convergence =
         1 - math.exp(-AppConstants.boxAnimationSpeed * dtSeconds);
 
@@ -180,24 +144,17 @@ class _DetectionScreenState
       final previous = previousByKey[target.trackingKey];
 
       if (previous == null) {
-        // جسم جديد كليًا — يظهر فورًا بمكانه الصحيح، بدون ما "يطير"
-        // من نقطة الصفر أو من مكان جسم تاني.
         nextAnimated.add(target);
         anyStillMoving = true;
         continue;
       }
 
-      // ⚡ لو وصل قريب كفاية من الهدف (أقل من نص بكسل بكل ضلع)، اعتبره
-      // "وصل" واستخدم موقع الهدف مباشرة — يوقف التقارب اللانهائي
-      // نظريًا (exponential decay رياضيًا ما يوصل صفر تمامًا أبدًا)
-      // ويقلل تغييرات دقيقة غير محسوسة بصريًا كانت تسبب إعادة رسم
-      // وتخصيص ذاكرة كل تِك حتى بمشهد ثابت تمامًا.
       const converged = 0.5;
       final closeEnough =
           (previous.box.left - target.box.left).abs() < converged &&
-              (previous.box.top - target.box.top).abs() < converged &&
-              (previous.box.right - target.box.right).abs() < converged &&
-              (previous.box.bottom - target.box.bottom).abs() < converged;
+          (previous.box.top - target.box.top).abs() < converged &&
+          (previous.box.right - target.box.right).abs() < converged &&
+          (previous.box.bottom - target.box.bottom).abs() < converged;
 
       if (closeEnough) {
         nextAnimated.add(target);
@@ -206,11 +163,7 @@ class _DetectionScreenState
 
       anyStillMoving = true;
 
-      final animatedBox = Rect.lerp(
-        previous.box,
-        target.box,
-        convergence,
-      )!;
+      final animatedBox = Rect.lerp(previous.box, target.box, convergence)!;
 
       nextAnimated.add(
         DetectedObject(
@@ -223,14 +176,38 @@ class _DetectionScreenState
       );
     }
 
-    // ⚡ لو كل شي وصل لهدفه ومافي جسم جديد، ما داعي نحدّث القيمة كل
-    // تِك — يقلل إعادة رسم/تخصيص غير محسوس بمشهد ثابت.
-    if (!anyStillMoving &&
-        previousAnimated.length == nextAnimated.length) {
-      return;
+    final boxesConverged =
+        !anyStillMoving && previousAnimated.length == nextAnimated.length;
+
+    if (!boxesConverged) {
+      _animatedDetections.value = nextAnimated;
     }
 
-    _animatedDetections.value = nextAnimated;
+    final handTargets = _handPointsForDisplay;
+    final previousHandPoints = _animatedHandPoints.value;
+
+    if (handTargets.isEmpty && previousHandPoints.isEmpty) {
+      // لا شيء
+    } else if (handTargets.length != previousHandPoints.length) {
+      _animatedHandPoints.value = handTargets;
+    } else {
+      final nextHandPoints = <HandLandmark>[];
+
+      for (int i = 0; i < handTargets.length; i++) {
+        final target = handTargets[i];
+        final previous = previousHandPoints[i];
+
+        nextHandPoints.add(
+          HandLandmark(
+            x: previous.x + (target.x - previous.x) * convergence,
+            y: previous.y + (target.y - previous.y) * convergence,
+            z: previous.z + (target.z - previous.z) * convergence,
+          ),
+        );
+      }
+
+      _animatedHandPoints.value = nextHandPoints;
+    }
   }
 
   Future<void> _clearMemory() async {
@@ -239,9 +216,7 @@ class _DetectionScreenState
       builder: (context) {
         return AlertDialog(
           title: const Text('مسح ذاكرة الأجسام؟'),
-          content: const Text(
-            'سيتم حذف جميع الأجسام المحفوظة من الهاتف.',
-          ),
+          content: const Text('سيتم حذف جميع الأجسام المحفوظة من الهاتف.'),
           actions: [
             TextButton(
               onPressed: () {
@@ -266,32 +241,42 @@ class _DetectionScreenState
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('تم مسح ذاكرة الأجسام'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('تم مسح ذاكرة الأجسام')));
   }
 
   Future<void> _initialize() async {
     try {
-      // موديل الكشف إجباري — لو فشل، نوقف التطبيق ونعرض الخطأ.
       await _detector.load();
 
-      // موديل العمق أصبح اختياريًا (يعمل عند الطلب فقط حسب الخطة
-      // الجديدة). لو ملفه غير موجود بعد (مثلًا لسا ما أضفت MiDaS)،
-      // لا نوقف التطبيق بالكامل — نكمل بدون قياس مسافة مؤقتًا.
       try {
         await _depth.load();
       } catch (e) {
         debugPrint(
           'تعذّر تحميل موديل العمق (سيعمل التطبيق بدون قياس '
-              'المسافة لغاية إضافة الملف): $e',
+          'المسافة لغاية إضافة الملف): $e',
         );
       }
 
       await _voice.init();
       await memory.init();
+
+      if (AppConstants.voiceCommandsEnabled) {
+        try {
+          await _speech.init();
+        } catch (e) {
+          debugPrint('تعذّر تهيئة الأوامر الصوتية (سيعمل التطبيق بدونها): $e');
+        }
+      }
+
+      if (AppConstants.handTrackingEnabled) {
+        try {
+          await _handTracker.load();
+        } catch (e) {
+          debugPrint('تعذّر تحميل موديل تتبّع اليد (سيعمل التطبيق بدونه): $e');
+        }
+      }
 
       _gyro.start();
 
@@ -356,8 +341,7 @@ class _DetectionScreenState
       _isRunning = false;
     }
 
-    final nextIndex =
-        (_cameraIndex + 1) % widget.cameras.length;
+    final nextIndex = (_cameraIndex + 1) % widget.cameras.length;
 
     await _initializeCamera(nextIndex);
 
@@ -372,8 +356,6 @@ class _DetectionScreenState
     }
   }
 
-  /// يشغّل/يوقف الصوت بالكامل بضغطة وحدة — مفيد للاختبار (هل التجمّد
-  /// سببه الصوت فعلًا؟) ومفيد للاستخدام العادي (كتم مؤقت بمكان هادئ).
   void _toggleVoice() {
     setState(() {
       _voice.enabled = !_voice.enabled;
@@ -385,8 +367,7 @@ class _DetectionScreenState
   }
 
   Future<void> _toggleLanguage() async {
-    final language =
-    _voice.language == SpeechLanguage.arabic
+    final language = _voice.language == SpeechLanguage.arabic
         ? SpeechLanguage.english
         : SpeechLanguage.arabic;
 
@@ -426,6 +407,12 @@ class _DetectionScreenState
       _lastLostAnnounce = null;
       _animatedDetections.value = [];
       _lastAnimationTickElapsed = null;
+      _touchedObjectKey = null;
+      _lastTouchTriggerAt = null;
+      _wasFistLastFrame = false;
+      _handPointsForDisplay = [];
+      _isFistForDisplay = false;
+      _animatedHandPoints.value = [];
     } else {
       setState(() {
         _isRunning = true;
@@ -454,26 +441,17 @@ class _DetectionScreenState
   }
 
   Future<void> _processFrame(CameraImage image) async {
-    // ⏱️ قياس زمني مؤقت — نحتاج أرقام حقيقية (ميلي ثانية) بدل التخمين
-    // لمعرفة أي مرحلة فعليًا تاخد الوقت الأكبر. احذف هذا البلوك بعد ما
-    // نحسم السبب.
     final frameStopwatch = Stopwatch()..start();
 
     try {
       final camera = widget.cameras[_cameraIndex];
       final sensorOrientation = camera.sensorOrientation;
 
-      final isRotated =
-          sensorOrientation == 90 ||
-              sensorOrientation == 270;
+      final isRotated = sensorOrientation == 90 || sensorOrientation == 270;
 
-      final fullWidth = isRotated
-          ? image.height
-          : image.width;
+      final fullWidth = isRotated ? image.height : image.width;
 
-      final fullHeight = isRotated
-          ? image.width
-          : image.height;
+      final fullHeight = isRotated ? image.width : image.height;
 
       final job = FrameConversionJob(
         yBytes: image.planes[0].bytes,
@@ -483,42 +461,48 @@ class _DetectionScreenState
         height: image.height,
         yRowStride: image.planes[0].bytesPerRow,
         uvRowStride: image.planes[1].bytesPerRow,
-        uvPixelStride:
-        image.planes[1].bytesPerPixel ?? 1,
+        uvPixelStride: image.planes[1].bytesPerPixel ?? 1,
         sensorOrientation: sensorOrientation,
         targetSize: AppConstants.modelInputSize,
       );
 
-      // تحويل إطار الكاميرا إلى RGB.
       final convertStart = frameStopwatch.elapsedMilliseconds;
-      final converted = await compute(
-        convertCameraFrame,
-        job,
-      );
-      final convertMs =
-          frameStopwatch.elapsedMilliseconds - convertStart;
+      final converted = await compute(convertCameraFrame, job);
+      final convertMs = frameStopwatch.elapsedMilliseconds - convertStart;
 
       _processedFrameCounter++;
 
-      // موديل الكشف يعمل في كل إطار تتم معالجته.
       final detectStart = frameStopwatch.elapsedMilliseconds;
       final detectedObjects = await _detector.detect(
         converted,
         fullWidth: fullWidth,
         fullHeight: fullHeight,
       );
-      final detectMs =
-          frameStopwatch.elapsedMilliseconds - detectStart;
+      final detectMs = frameStopwatch.elapsedMilliseconds - detectStart;
 
       debugPrint(
         '⏱️ إطار: تحويل=${convertMs}ms، كشف+فك تشفير=${detectMs}ms، '
-            'إجمالي حتى الآن=${frameStopwatch.elapsedMilliseconds}ms',
+        'إجمالي حتى الآن=${frameStopwatch.elapsedMilliseconds}ms',
       );
 
-      // موديل العمق يعمل فقط لما المستخدم يطلب صراحة (زر "ما المسافة؟")،
-      // وليس تلقائيًا. لما نلتقط الطلب هون، نعيد تحويل نفس الإطار الخام
-      // بحجم إدخال موديل العمق (قد يختلف عن حجم موديل الكشف)، ثم
-      // نشغّل موديل العمق مرة واحدة بس.
+      // كشف اليد متوقف بالكامل حاليًا. لا نكتفي بمنع تحميل النموذج في
+      // init؛ هذه الحراسة تمنع أي استدعاء للقناة لو تغيّر ترتيب التهيئة
+      // أو أصبح الكاشف جاهزًا من شاشة سابقة. الكود والرسم محفوظان
+      // لاستخدام لاحق عندما نعيد AppConstants.handTrackingEnabled إلى true.
+      final List<HandLandmark> handLandmarks;
+      if (AppConstants.handTrackingEnabled &&
+          _handTracker.isReady &&
+          _processedFrameCounter % 2 == 0) {
+        handLandmarks = await _handTracker.detect(
+          converted.rgbBytes,
+          width: converted.size,
+          height: converted.size,
+        );
+        _lastRawHandLandmarks = handLandmarks;
+      } else {
+        handLandmarks = const <HandLandmark>[];
+      }
+
       if (_depthRequested) {
         _depthRequested = false;
 
@@ -535,10 +519,7 @@ class _DetectionScreenState
           targetSize: AppConstants.depthInputSize,
         );
 
-        final depthFrame = await compute(
-          convertCameraFrame,
-          depthJob,
-        );
+        final depthFrame = await compute(convertCameraFrame, depthJob);
 
         final newDepthMap = await _depth.predict(depthFrame);
 
@@ -564,10 +545,21 @@ class _DetectionScreenState
       final results = <DetectedObject>[];
 
       for (final object in detectedObjects) {
-        // ⚠️ ذاكرة الأجسام (بصمة لونية + ملف JSON) معطَّلة حاليًا
-        // (AppConstants.objectMemoryEnabled = false) — نتخطى الفحص
-        // والحفظ كليًا، ونستخدم التسمية بس كهوية. أخف وأسرع بكثير،
-        // بس بدون تمييز جسمين مختلفين بنفس التسمية (كرسي يسار/يمين).
+        double distance = object.distance;
+
+        final depthMap = _lastDepthMap;
+
+        if (depthMap != null) {
+          distance =
+              _depth.distanceAt(
+                map: depthMap,
+                box: object.box,
+                fullWidth: fullWidth,
+                fullHeight: fullHeight,
+              ) ??
+              object.distance;
+        }
+
         String? memoryId;
 
         if (AppConstants.objectMemoryEnabled) {
@@ -581,23 +573,14 @@ class _DetectionScreenState
           final memoryMatch = await memory.remember(
             label: object.label,
             fingerprint: fingerprint,
-          );
-
-          memoryId = memoryMatch.id;
-        }
-
-        double distance = object.distance;
-
-        final depthMap = _lastDepthMap;
-
-        if (depthMap != null) {
-          distance = _depth.distanceAt(
-            map: depthMap,
             box: object.box,
             fullWidth: fullWidth,
             fullHeight: fullHeight,
-          ) ??
-              object.distance;
+            confidence: object.confidence,
+            distance: distance,
+          );
+
+          memoryId = memoryMatch.id;
         }
 
         results.add(
@@ -611,24 +594,121 @@ class _DetectionScreenState
         );
       }
 
+      if (AppConstants.objectMemoryEnabled) {
+        memory.sweepStatuses();
+      }
+
+      Rect? handBox;
+
+      if (handLandmarks.isNotEmpty) {
+        double minX = 1.0, minY = 1.0, maxX = 0.0, maxY = 0.0;
+
+        for (final point in handLandmarks) {
+          if (point.x < minX) minX = point.x;
+          if (point.y < minY) minY = point.y;
+          if (point.x > maxX) maxX = point.x;
+          if (point.y > maxY) maxY = point.y;
+        }
+
+        handBox = Rect.fromLTRB(
+          minX * fullWidth,
+          minY * fullHeight,
+          maxX * fullWidth,
+          maxY * fullHeight,
+        );
+      }
+
+      if (handBox != null) {
+        results.removeWhere((obj) {
+          if (obj.label != 'person') return false;
+
+          final intersection = obj.box.intersect(handBox!);
+          if (intersection.width <= 0 || intersection.height <= 0) {
+            return false;
+          }
+
+          final overlapArea = intersection.width * intersection.height;
+          final handArea = handBox.width * handBox.height;
+          if (handArea <= 0) return false;
+
+          final overlapRatio = overlapArea / handArea;
+          return overlapRatio > AppConstants.handMisdetectionOverlapThreshold;
+        });
+      }
+
+      DetectedObject? touchedObject;
+
+      if (handLandmarks.length > 8) {
+        final indexFingertip = handLandmarks[8];
+        final fingertipPoint = Offset(
+          indexFingertip.x * fullWidth,
+          indexFingertip.y * fullHeight,
+        );
+
+        const touchTolerance = 10.0;
+
+        for (final obj in results) {
+          final tolerantBox = obj.box.inflate(touchTolerance);
+          if (tolerantBox.contains(fingertipPoint)) {
+            touchedObject = obj;
+            break;
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _touchedObjectKey = touchedObject?.trackingKey;
+        });
+      }
+
+      final isFistNow = _isFistGesture(handLandmarks);
+
+      if (touchedObject != null && isFistNow && !_wasFistLastFrame) {
+        final now = DateTime.now();
+        final cooldownElapsed =
+            _lastTouchTriggerAt == null ||
+            now.difference(_lastTouchTriggerAt!) >
+                Duration(seconds: AppConstants.touchSelectionCooldownSeconds);
+
+        if (cooldownElapsed) {
+          _lastTouchTriggerAt = now;
+
+          _voice.speakNow('${toArabicLabel(touchedObject.label)} — تم التحديد');
+
+          _startNavigation(touchedObject);
+        }
+      }
+
+      _wasFistLastFrame = isFistNow;
+
+      if (mounted) {
+        setState(() {
+          _handPointsForDisplay = handLandmarks
+              .map(
+                (p) => HandLandmark(
+                  x: p.x * fullWidth,
+                  y: p.y * fullHeight,
+                  z: p.z,
+                ),
+              )
+              .toList();
+          _isFistForDisplay = isFistNow;
+        });
+      }
+
       List<DetectedObject> displayResults;
 
       if (results.isNotEmpty) {
-        // وجدنا الجسم؛ نعيد عداد الفقدان للصفر.
         _missingDetectionFrames = 0;
 
-        // تنعيم حركة المربعات.
         displayResults = _smoothDetections(results);
       } else {
-        // لم يجد الموديل الجسم في هذا الإطار فقط.
         _missingDetectionFrames++;
 
-        if (_missingDetectionFrames <=
-            AppConstants.detectionHoldFrames) {
-          // نحتفظ بالنتيجة السابقة مؤقتًا.
+        if (_missingDetectionFrames <= AppConstants.detectionHoldFrames) {
           displayResults = _detections;
         } else {
-          // اختفى الجسم فعلًا لفترة أطول.
           displayResults = [];
         }
       }
@@ -641,10 +721,6 @@ class _DetectionScreenState
         _imageHeight = fullHeight;
       });
 
-      // تحديث عدّاد الاستقرار: نبني الخريطة من جديد كل إطار بالاعتماد
-      // على `results` (كشف هذا الإطار الفعلي فقط، مو المربعات
-      // المحفوظة مؤقتًا) — أي جسم مو موجود بهذا الإطار يسقط من
-      // الخريطة تلقائيًا (يرجع يبدأ من الصفر لو ظهر بعدين).
       final newStreak = <String, int>{};
       for (final obj in results) {
         final previousStreak = _detectionStreak[obj.trackingKey] ?? 0;
@@ -654,20 +730,10 @@ class _DetectionScreenState
         ..clear()
         ..addAll(newStreak);
 
-      // وضع التوجيه له أولوية على النطق العادي — نوقف الإعلانات
-      // العشوائية عن الأجسام حتى ما تتداخل مع إرشادات التوجيه الحرجة.
-      //
-      // ⚠️ بدون await عمدًا: هذا هو الإصلاح الأهم للأداء — النطق
-      // الصوتي (يمكن يأخذ ثانية أو أكتر لجملة كاملة) ما لازم يوقف
-      // معالجة إطار الكاميرا التالي. قبل هذا التعديل، كل جملة نطق
-      // كانت "تجمّد" الكشف بالكامل لحد ما تخلص — وهذا سبب رئيسي
-      // لبطء الأداء المحسوس، خصوصًا إنه تطبيق لازم يبقى سريع الاستجابة
-      // لمستخدم كفيف.
       if (_isNavigating) {
         _handleNavigation(displayResults, fullWidth, fullHeight);
-      } else if (results.isNotEmpty) {
-        // ننطق بس الأجسام المستقرة (ظهرت بإطارين متتاليين على الأقل)
-        // — يفلتر كشوفات وهمية لحظية من ضبابية حركة الكاميرا السريعة.
+      } else if (AppConstants.announceAllDetectionsAutomatically &&
+          results.isNotEmpty) {
         final stableForAnnounce = displayResults.where((obj) {
           final streak = _detectionStreak[obj.trackingKey] ?? 0;
           return streak >= AppConstants.minDetectionStreakForAnnounce;
@@ -678,31 +744,21 @@ class _DetectionScreenState
         }
       }
 
-      // ⏱️ الزمن الكامل من بداية استلام الإطار لحد ما صار جاهز للعرض
-      // على الشاشة (بدون احتساب رسم الشاشة نفسه، اللي يصير بخطوة
-      // منفصلة لاحقة عبر setState/Ticker).
       debugPrint(
         '⏱️ إجمالي معالجة الإطار كامل: '
-            '${frameStopwatch.elapsedMilliseconds}ms',
+        '${frameStopwatch.elapsedMilliseconds}ms',
       );
     } catch (e) {
       debugPrint('Frame processing error: $e');
     }
   }
-  /// يحسب القرب النسبي لكل جسم مكتشَف حاليًا بالاعتماد على خريطة عمق
-  /// جديدة، وينطق ملخصًا صوتيًا (الأقرب أولًا)، ويحدّث _proximityLabels
-  /// لعرضها بالواجهة (chips/صناديق).
-  ///
-  /// ⚠️ القيم هنا نسبية (relative depth) وليست أمتارًا حقيقية — MiDaS
-  /// بدون معايرة إضافية ما يعطي مسافة متّرية دقيقة، بس ترتيب "مين أقرب
-  /// من مين" بنفس المشهد. لهذا ننطق تصنيف قرب (قريب جدًا/قريب/متوسط/
-  /// بعيد) بدل رقم بالمتر قد يكون مضلِّلًا.
+
   Future<void> _announceProximity(
-      List<DetectedObject> objects,
-      DepthMap depthMap, {
-        required int fullWidth,
-        required int fullHeight,
-      }) async {
+    List<DetectedObject> objects,
+    DepthMap depthMap, {
+    required int fullWidth,
+    required int fullHeight,
+  }) async {
     if (objects.isEmpty) {
       _voice.speakNow('ما في أشياء واضحة أمامك الآن');
       return;
@@ -728,7 +784,6 @@ class _DetectionScreenState
       return;
     }
 
-    // رتّب من الأقرب للأبعد.
     withDepth.sort((a, b) {
       final cmp = AppConstants.depthHigherValueMeansCloser
           ? b.value.compareTo(a.value)
@@ -749,9 +804,6 @@ class _DetectionScreenState
         maxValue: maxValue,
         higherIsCloser: AppConstants.depthHigherValueMeansCloser,
       );
-      // نستخدم label (مو trackingKey) كمفتاح، لأن الأجسام هون خارجة
-      // مباشرة من الموديل بدون معرّف ذاكرة بعد (يُضاف لاحقًا بمرحلة
-      // مطابقة الذاكرة بـ _processFrame) — label ثابت ومضمون التطابق.
       newLabels[entry.key.label] = category;
     }
 
@@ -761,22 +813,16 @@ class _DetectionScreenState
       });
     }
 
-    // نطق موجز: الأقرب فقط لو جسم واحد، أو الأقرب + الثاني لو أكثر.
     final nearestLabel = toArabicLabel(withDepth.first.key.label);
 
     if (withDepth.length == 1) {
       _voice.speakNow('$nearestLabel هو الأقرب إليك');
     } else {
       final secondLabel = toArabicLabel(withDepth[1].key.label);
-      _voice.speakNow(
-        'الأقرب إليك هو $nearestLabel، وبعده $secondLabel',
-      );
+      _voice.speakNow('الأقرب إليك هو $nearestLabel، وبعده $secondLabel');
     }
   }
 
-  /// يحوّل قيمة عمق خام لتصنيف نصي بالعربي بالاعتماد على موقعها ضمن
-  /// مدى القيم الحالي بنفس المشهد (وليس عتبات مطلقة، لأن المدى يختلف
-  /// كثيرًا حسب الإضاءة والمشهد بموديلات العمق النسبي).
   String _proximityCategory({
     required double value,
     required double minValue,
@@ -799,11 +845,6 @@ class _DetectionScreenState
     return 'بعيد';
   }
 
-  /// يفتح قائمة تختار منها جسم من الأجسام المكتشفة حاليًا لتبدأ التوجّه
-  /// نحوه. لو في أكتر من جسم بنفس التسمية (مثلًا كرسيّين)، يعرض كل
-  /// وحد لحاله مع تمييز موقعه (يسار/يمين/رقم) حتى تقدر تحدّد بالضبط
-  /// أي وحد تقصد — القفل بعدها يصير بهويته البصرية الفعلية
-  /// (trackingKey)، مو بس بتسميته.
   void _openObjectPicker() {
     if (_detections.isEmpty) return;
 
@@ -820,8 +861,6 @@ class _DetectionScreenState
         return;
       }
 
-      // أكتر من جسم بنفس التسمية — رتّبهم من اليسار لليمين بالصورة
-      // ونضيف تمييز واضح لكل وحد.
       final sorted = [...objs]
         ..sort((a, b) => a.box.center.dx.compareTo(b.box.center.dx));
 
@@ -829,9 +868,7 @@ class _DetectionScreenState
         final positionHint = sorted.length == 2
             ? (i == 0 ? 'يسار' : 'يمين')
             : 'رقم ${i + 1}';
-        entries.add(
-          ('${toArabicLabel(label)} ($positionHint)', sorted[i]),
-        );
+        entries.add(('${toArabicLabel(label)} ($positionHint)', sorted[i]));
       }
     });
 
@@ -852,10 +889,7 @@ class _DetectionScreenState
               ),
               ...entries.map((entry) {
                 return ListTile(
-                  leading: const Icon(
-                    Icons.near_me,
-                    color: Colors.blueAccent,
-                  ),
+                  leading: const Icon(Icons.near_me, color: Colors.blueAccent),
                   title: Text(
                     entry.$1,
                     style: const TextStyle(color: Colors.white),
@@ -871,6 +905,35 @@ class _DetectionScreenState
         );
       },
     );
+  }
+
+  bool _isFistGesture(List<HandLandmark> landmarks) {
+    if (landmarks.length < 21) return false;
+
+    final wrist = landmarks[0];
+    final middleMcp = landmarks[9];
+
+    double distance(HandLandmark a, HandLandmark b) {
+      final dx = a.x - b.x;
+      final dy = a.y - b.y;
+      return math.sqrt(dx * dx + dy * dy);
+    }
+
+    final handSize = distance(wrist, middleMcp);
+    if (handSize < 1e-6) return false;
+
+    const fingertipIndices = [4, 8, 12, 16, 20];
+    double totalDistance = 0;
+
+    for (final index in fingertipIndices) {
+      totalDistance += distance(landmarks[index], wrist);
+    }
+
+    final averageDistance = totalDistance / fingertipIndices.length;
+    final ratio = averageDistance / handSize;
+
+    const fistThreshold = 0.9;
+    return ratio < fistThreshold;
   }
 
   void _startNavigation(DetectedObject target) {
@@ -900,14 +963,11 @@ class _DetectionScreenState
     _voice.speakNow('تم إلغاء التوجيه');
   }
 
-  /// يُستدعى بكل إطار مُعالَج أثناء وضع التوجيه. يراقب حجم صندوق الهدف
-  /// (مؤشر تقارب بدون حاجة لموديل عمق)، وينبّه لو في عائق قريب بمنتصف
-  /// الكادر، ولو فُقد الهدف من الرؤية.
   Future<void> _handleNavigation(
-      List<DetectedObject> currentDetections,
-      int fullWidth,
-      int fullHeight,
-      ) async {
+    List<DetectedObject> currentDetections,
+    int fullWidth,
+    int fullHeight,
+  ) async {
     final targetLabel = _navigationTargetLabel;
     if (targetLabel == null) return;
 
@@ -916,9 +976,6 @@ class _DetectionScreenState
     DetectedObject? target;
     for (final obj in currentDetections) {
       if (obj.label != targetLabel) continue;
-      // نطابق بالهوية بالضبط (بصمة بصرية دائمة)، مو بس بأكبر صندوق
-      // بنفس التسمية — هذا يمنع الالتباس لو في أكتر من جسم بنفس
-      // التسمية بالمشهد (مثلًا كرسيّين جنب بعض).
       if (targetId != null && obj.trackingKey == targetId) {
         target = obj;
         break;
@@ -928,11 +985,8 @@ class _DetectionScreenState
     if (target == null) {
       final now = DateTime.now();
 
-      // إعلان فوري أول مرة يُفقَد فيها الهدف (مو انتظار عدة إطارات) —
-      // المستخدم كفيف ولازم يعرف فورًا إنه فقد الرؤية، مو بعد نص ثانية.
-      // بعدها نستخدم فترة انتظار قصيرة (cooldown) لتجنّب تكرار مزعج لو
-      // ضل مفقود لفترة أطول.
-      final canAnnounce = _lastLostAnnounce == null ||
+      final canAnnounce =
+          _lastLostAnnounce == null ||
           now.difference(_lastLostAnnounce!) >
               Duration(
                 seconds: AppConstants.navigationLostAnnounceCooldownSeconds,
@@ -944,15 +998,9 @@ class _DetectionScreenState
         final yaw = _gyro.cumulativeYaw;
 
         if (yaw.abs() < AppConstants.gyroMinYawToGuessDirection) {
-          // ما لف بزاوية واضحة — الجسم اختفى لسبب تاني (احتجاب،
-          // بعد كبير)، مو لأنه غيّر اتجاهه بنفسه.
-          //
-          // ⚠️ بدون await عمدًا: النطق ما لازم يوقف معالجة الإطار
-          // التالي — لو المستخدم كفيف ورجع لاتجاهه صح، لازم التطبيق
-          // "يشوف" هذا فورًا بأقرب إطار، مو يستنى لحد ما تخلص الجملة.
           _voice.speakNow(
             'فقدت ${toArabicLabel(targetLabel)} من مجال الرؤية، '
-                'وجّه الكاميرا نحوه',
+            'وجّه الكاميرا نحوه',
           );
         } else {
           final turnedLeft = AppConstants.gyroYawPositiveMeansTurnedLeft
@@ -964,7 +1012,7 @@ class _DetectionScreenState
 
           _voice.speakNow(
             'التفتّ ل$direction، ارجع شوي لل$correction حتى نرجع '
-                'نلاقي ${toArabicLabel(targetLabel)}',
+            'نلاقي ${toArabicLabel(targetLabel)}',
           );
         }
       }
@@ -973,16 +1021,12 @@ class _DetectionScreenState
 
     _lastLostAnnounce = null;
 
-    // شفنا الهدف فعليًا هالإطار — نصفّر عدّاد الدوران حتى يبقى يقيس
-    // "الدوران منذ آخر مرة شفنا فيها الهدف" بس، مو من بداية التوجيه.
     _gyro.resetYaw();
 
     final heightRatio = target.box.height / fullHeight;
 
     if (heightRatio >= AppConstants.navigationArrivalBoxHeightRatio) {
-      _voice.speakNow(
-        'وصلت! ${toArabicLabel(targetLabel)} أمامك مباشرة',
-      );
+      _voice.speakNow('وصلت! ${toArabicLabel(targetLabel)} أمامك مباشرة');
 
       if (mounted) {
         setState(() {
@@ -993,8 +1037,6 @@ class _DetectionScreenState
       return;
     }
 
-    // فحص العوائق: أي جسم غير الهدف، كبير الحجم بالكادر، وقريب من
-    // منتصفه أفقيًا (يعني بمسار المشي).
     final now = DateTime.now();
 
     for (final obj in currentDetections) {
@@ -1008,32 +1050,28 @@ class _DetectionScreenState
 
       final isObstacle =
           areaRatio >= AppConstants.navigationObstacleBoxAreaRatio &&
-              centerOffset <= AppConstants.navigationObstacleCenterTolerance;
+          centerOffset <= AppConstants.navigationObstacleCenterTolerance;
 
       if (!isObstacle) continue;
 
-      final canWarn = _lastObstacleWarning == null ||
+      final canWarn =
+          _lastObstacleWarning == null ||
           now.difference(_lastObstacleWarning!) >
-              Duration(
-                seconds: AppConstants.navigationObstacleCooldownSeconds,
-              );
+              Duration(seconds: AppConstants.navigationObstacleCooldownSeconds);
 
       if (canWarn) {
         _lastObstacleWarning = now;
-        _voice.speakNow(
-          'انتبه! ${toArabicLabel(obj.label)} أمامك مباشرة',
-        );
+        _voice.speakNow('انتبه! ${toArabicLabel(obj.label)} أمامك مباشرة');
       }
 
       break;
     }
 
-    // إرشاد دوري ("استمر") — بمعدّل محدود حتى ما يصير إزعاج.
-    final canAnnounceProgress = _lastNavigationAnnounce == null ||
+    final canAnnounceProgress =
+        _lastNavigationAnnounce == null ||
         now.difference(_lastNavigationAnnounce!) >
             Duration(
-              seconds:
-              AppConstants.navigationProgressAnnounceCooldownSeconds,
+              seconds: AppConstants.navigationProgressAnnounceCooldownSeconds,
             );
 
     if (canAnnounceProgress) {
@@ -1042,10 +1080,180 @@ class _DetectionScreenState
     }
   }
 
+  /// يُستدعى لحظة ما إصبع المستخدم يلمس زر الميكروفون (onPointerDown
+  /// عبر الـListener اللي لافّ الزر بالواجهة). يبدأ جلسة استماع
+  /// مستمرة تفضل شغّالة طول ما الإصبع لسا ضاغط — لا نطق تمهيدي هون
+  /// عمدًا (زي "تفضّل" بالتصميم القديم)، لأن TTS وSTT بيتنافسوا على
+  /// التحكم بالصوت (Audio Focus) بأندرويد، وهالتزامن كان يزيد احتمال
+  /// تضارب مع محرك STT، بالإضافة إنه مو ضروري أصلًا — المستخدم نفسه
+  /// متحكم بتوقيت الضغط.
+  void _onSpeechText(String text, bool _) {
+    if (!mounted || text == _recognizedSpeechText) return;
 
-  /// يُستدعى من زر "ما المسافة؟" بالواجهة. لا يشغّل الموديل مباشرة هون
-  /// (لأنه ما عنده وصول للإطار الخام) — بس يرفع فلاغ، ويلتقطه
-  /// _processFrame بأقرب إطار قادم وينفّذ القياس الفعلي.
+    setState(() {
+      _recognizedSpeechText = text;
+    });
+  }
+
+  Future<void> _onMicPressDown() async {
+    if (!AppConstants.voiceCommandsEnabled || _micPressActive) return;
+
+    debugPrint('🎤 المايك: pointer down');
+    _micPressActive = true;
+    final gestureId = ++_micGestureId;
+
+    // نغيّر الحالة بصريًا فور الضغط، لا بعد انتهاء startListening().
+    // هذا يمنع ضغطة الرفع السريعة من أن تضيع قبل وصول Future البدء.
+    if (mounted) {
+      setState(() {
+        _isListeningForCommand = true;
+        _recognizedSpeechText = '';
+      });
+    }
+
+    if (!_speech.isAvailable) {
+      _micPressActive = false;
+      if (mounted) {
+        setState(() {
+          _isListeningForCommand = false;
+        });
+      }
+      _voice.speakNow('الأوامر الصوتية غير متوفرة على هذا الجهاز');
+      return;
+    }
+
+    final started = await _speech.startListening();
+    debugPrint('🎤 المايك: startListening=$started');
+
+    // قد يكون المستخدم رفع إصبعه أثناء مهلة بدء المحرك. في هذه الحالة
+    // نغلق أي جلسة فتحت بالخطأ ولا ننتظر ضغطة أخرى لإيقافها.
+    if (!_micPressActive || gestureId != _micGestureId) {
+      if (started) {
+        await _speech.stopListening();
+      }
+      return;
+    }
+
+    if (!started && mounted) {
+      setState(() {
+        _isListeningForCommand = false;
+      });
+    }
+  }
+
+  /// يُستدعى لحظة ما المستخدم يرفع إصبعه عن زر الميكروفون
+  /// (onPointerUp) — يوقف الاستماع، ياخذ النص النهائي، ويفسّره وينفّذه
+  /// كأمر فورًا.
+  Future<void> _onMicPressUp() async {
+    if (!_micPressActive) return;
+
+    debugPrint('🎤 المايك: pointer up');
+    _micPressActive = false;
+    _micGestureId++;
+
+    final recognizedText = await _speech.stopListening();
+
+    if (mounted) {
+      setState(() {
+        _isListeningForCommand = false;
+        if (recognizedText != null && recognizedText.isNotEmpty) {
+          _recognizedSpeechText = recognizedText;
+        }
+      });
+    }
+
+    if (recognizedText == null || recognizedText.isEmpty) {
+      debugPrint('🎤 المايك: لم يصل أي نص');
+      _voice.speakNow('ما سمعت شي، حاول مرة ثانية');
+      return;
+    }
+
+    debugPrint('🎤 أمر صوتي مسموع: "$recognizedText"');
+
+    final command = parseVoiceCommand(recognizedText);
+    _executeVoiceCommand(command);
+
+    //  عشان الاختبار
+    debugPrint('🔍 النص بعد التطبيع: "${normalizeArabicText(recognizedText)}"');
+    debugPrint(
+      '🔍 استخراج الاسم: "${englishLabelForArabic(normalizeArabicText(recognizedText))}"',
+    );
+  }
+
+  /// يُستدعى لو الإصبع انسحب برّة منطقة الزر قبل ما يُرفَع
+  /// (onPointerCancel) — نعتبرها "تراجع" عن الأمر، فنلغي الجلسة بدون
+  /// تنفيذ أي شي (بعكس onPointerUp اللي دايمًا ينفّذ اللي انسمع).
+  Future<void> _onMicPressCancel() async {
+    if (!_micPressActive) return;
+
+    _micPressActive = false;
+    _micGestureId++;
+
+    await _speech.cancelListening();
+
+    if (mounted) {
+      setState(() {
+        _isListeningForCommand = false;
+      });
+    }
+  }
+
+  void _executeVoiceCommand(VoiceCommand command) {
+    switch (command) {
+      case FindObjectCommand(:final englishLabel, :final arabicLabel):
+        if (!AppConstants.objectMemoryEnabled) {
+          _voice.speakNow('ذاكرة الأجسام غير مفعّلة حاليًا');
+          return;
+        }
+
+        final record = memory.findMostRelevantByLabel(englishLabel);
+
+        if (record == null) {
+          _voice.speakNow('ما شفت $arabicLabel لسا');
+          return;
+        }
+
+        final statusHint = record.status == ObjectStatus.lost
+            ? ' (آخر مكان شفته فيه)'
+            : '';
+
+        _voice.speakNow('$arabicLabel ${record.arabicDirection}$statusHint');
+        return;
+
+      case WhatsAroundCommand():
+        if (!AppConstants.objectMemoryEnabled) {
+          _voice.speakNow('ذاكرة الأجسام غير مفعّلة حاليًا');
+          return;
+        }
+
+        final active = memory.activeRecords;
+
+        if (active.isEmpty) {
+          _voice.speakNow('ما في شي واضح قدامك حاليًا');
+          return;
+        }
+
+        final sentence = active
+            .map((r) => '${toArabicLabel(r.label)} ${r.arabicDirection}')
+            .join('، ');
+
+        _voice.speakNow(sentence);
+        return;
+
+      case StopNavigationCommand():
+        if (_isNavigating) {
+          _cancelNavigation();
+        } else {
+          _voice.speakNow('ما في توجيه شغّال حاليًا');
+        }
+        return;
+
+      case UnknownCommand():
+        _voice.speakNow('ما فهمت الأمر، جرّب تقول: وين الكرسي؟');
+        return;
+    }
+  }
+
   void _requestDistance() {
     if (!_isRunning || !_depth.isReady || _isMeasuringDistance) {
       if (!_depth.isReady) {
@@ -1060,9 +1268,7 @@ class _DetectionScreenState
     });
   }
 
-  List<DetectedObject> _smoothDetections(
-      List<DetectedObject> incoming,
-      ) {
+  List<DetectedObject> _smoothDetections(List<DetectedObject> incoming) {
     if (_detections.isEmpty) {
       return incoming;
     }
@@ -1085,34 +1291,21 @@ class _DetectionScreenState
           continue;
         }
 
-        final overlap = _boxIou(
-          previous.box,
-          current.box,
-        );
+        final overlap = _boxIou(previous.box, current.box);
 
-        final centerDistance = _centerDistance(
-          previous.box,
-          current.box,
-        );
+        final centerDistance = _centerDistance(previous.box, current.box);
 
-        final allowedDistance = math.max(
-          50.0,
-          previous.box.longestSide * 0.8,
-        );
+        final allowedDistance = math.max(50.0, previous.box.longestSide * 0.8);
 
-        final isSameObject =
-            overlap > 0.05 ||
-                centerDistance < allowedDistance;
+        final isSameObject = overlap > 0.05 || centerDistance < allowedDistance;
 
         if (!isSameObject) {
           continue;
         }
 
-        final score = overlap +
-            (1.0 -
-                (centerDistance /
-                    (allowedDistance * 2)))
-                .clamp(0.0, 1.0);
+        final score =
+            overlap +
+            (1.0 - (centerDistance / (allowedDistance * 2))).clamp(0.0, 1.0);
 
         if (score > bestScore) {
           bestScore = score;
@@ -1129,11 +1322,6 @@ class _DetectionScreenState
 
       final previous = _detections[bestIndex];
 
-      // ⚡ ما نعمل smoothing بالموقع هون بعد الآن — الـTicker
-      // (_onBoxAnimationTick) صار يتكفّل بالتحريك السلس باستمرار
-      // 60fps. لو عملنا smoothing هون كمان، بيصير تنعيم فوق تنعيم
-      // (طبقتين)، والنتيجة إحساس "تأخر" أبطأ بدل أسرع. نمرر موقع
-      // الهدف الخام مباشرة، والـTicker هو اللي يزحف نحوه بسلاسة.
       final smoothDistance = _smoothDistance(
         previous.distance,
         current.distance,
@@ -1153,27 +1341,16 @@ class _DetectionScreenState
     return smoothed;
   }
 
-  Rect _lerpRect(
-      Rect oldRect,
-      Rect newRect,
-      double amount,
-      ) {
+  Rect _lerpRect(Rect oldRect, Rect newRect, double amount) {
     return Rect.fromLTRB(
-      oldRect.left +
-          (newRect.left - oldRect.left) * amount,
-      oldRect.top +
-          (newRect.top - oldRect.top) * amount,
-      oldRect.right +
-          (newRect.right - oldRect.right) * amount,
-      oldRect.bottom +
-          (newRect.bottom - oldRect.bottom) * amount,
+      oldRect.left + (newRect.left - oldRect.left) * amount,
+      oldRect.top + (newRect.top - oldRect.top) * amount,
+      oldRect.right + (newRect.right - oldRect.right) * amount,
+      oldRect.bottom + (newRect.bottom - oldRect.bottom) * amount,
     );
   }
 
-  double _smoothDistance(
-      double oldDistance,
-      double newDistance,
-      ) {
+  double _smoothDistance(double oldDistance, double newDistance) {
     if (newDistance <= 0) {
       return oldDistance;
     }
@@ -1185,63 +1362,39 @@ class _DetectionScreenState
     const newValueWeight = 0.65;
     const oldValueWeight = 0.35;
 
-    return oldDistance * oldValueWeight +
-        newDistance * newValueWeight;
+    return oldDistance * oldValueWeight + newDistance * newValueWeight;
   }
 
-  double _centerDistance(
-      Rect first,
-      Rect second,
-      ) {
+  double _centerDistance(Rect first, Rect second) {
     final dx = first.center.dx - second.center.dx;
     final dy = first.center.dy - second.center.dy;
 
     return math.sqrt(dx * dx + dy * dy);
   }
 
-  double _boxIou(
-      Rect first,
-      Rect second,
-      ) {
-    final left = math.max(
-      first.left,
-      second.left,
-    );
+  double _boxIou(Rect first, Rect second) {
+    final left = math.max(first.left, second.left);
 
-    final top = math.max(
-      first.top,
-      second.top,
-    );
+    final top = math.max(first.top, second.top);
 
-    final right = math.min(
-      first.right,
-      second.right,
-    );
+    final right = math.min(first.right, second.right);
 
-    final bottom = math.min(
-      first.bottom,
-      second.bottom,
-    );
+    final bottom = math.min(first.bottom, second.bottom);
 
     final intersectionWidth = right - left;
     final intersectionHeight = bottom - top;
 
-    if (intersectionWidth <= 0 ||
-        intersectionHeight <= 0) {
+    if (intersectionWidth <= 0 || intersectionHeight <= 0) {
       return 0.0;
     }
 
-    final intersectionArea =
-        intersectionWidth * intersectionHeight;
+    final intersectionArea = intersectionWidth * intersectionHeight;
 
-    final firstArea =
-        first.width * first.height;
+    final firstArea = first.width * first.height;
 
-    final secondArea =
-        second.width * second.height;
+    final secondArea = second.width * second.height;
 
-    final unionArea =
-        firstArea + secondArea - intersectionArea;
+    final unionArea = firstArea + secondArea - intersectionArea;
 
     if (unionArea <= 0) {
       return 0.0;
@@ -1249,26 +1402,26 @@ class _DetectionScreenState
 
     return intersectionArea / unionArea;
   }
+
   @override
   void dispose() {
     _boxAnimationTicker.dispose();
     _animatedDetections.dispose();
+    _animatedHandPoints.dispose();
     _controller?.dispose();
     _detector.dispose();
     _depth.dispose();
     _voice.dispose();
     _gyro.dispose();
+    _handTracker.dispose();
+    _speech.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isInitializing) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (_error != null) {
@@ -1279,9 +1432,7 @@ class _DetectionScreenState
             child: Text(
               _error!,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.red,
-              ),
+              style: const TextStyle(color: Colors.red),
             ),
           ),
         ),
@@ -1290,97 +1441,50 @@ class _DetectionScreenState
 
     final controller = _controller;
 
-    if (controller == null ||
-        !controller.value.isInitialized) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+    if (controller == null || !controller.value.isInitialized) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black87,
-
-      ),
+      appBar: AppBar(backgroundColor: Colors.black87),
       body: SafeArea(
         child: Column(
           children: [
-
-
-
-
             Container(
               color: Colors.black87,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 8,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
                   Text(
-                    _isRunning
-                        ? 'الكشف يعمل'
-                        : 'متوقف',
-                    style: const TextStyle(
-                      color: Colors.white,
-                    ),
+                    _isRunning ? 'الكشف يعمل' : 'متوقف',
+                    style: const TextStyle(color: Colors.white),
                   ),
                   const Spacer(),
-
-
-
                   IconButton(
                     onPressed: _toggleVoice,
                     icon: Icon(
-                      _voice.enabled
-                          ? Icons.volume_up
-                          : Icons.volume_off,
+                      _voice.enabled ? Icons.volume_up : Icons.volume_off,
                       color: Colors.white,
                     ),
-                    tooltip: _voice.enabled
-                        ? 'كتم الصوت'
-                        : 'تفعيل الصوت',
+                    tooltip: _voice.enabled ? 'كتم الصوت' : 'تفعيل الصوت',
                   ),
-
                   TextButton.icon(
                     onPressed: _toggleLanguage,
-                    icon: const Icon(
-                      Icons.translate,
-                      color: Colors.white,
-                    ),
+                    icon: const Icon(Icons.translate, color: Colors.white),
                     label: Text(
-                      _voice.language ==
-                          SpeechLanguage.arabic
-                          ? 'AR'
-                          : 'EN',
-                      style: const TextStyle(
-                        color: Colors.white,
-                      ),
+                      _voice.language == SpeechLanguage.arabic ? 'AR' : 'EN',
+                      style: const TextStyle(color: Colors.white),
                     ),
                   ),
-
-
                   IconButton(
                     onPressed: _clearMemory,
-                    icon: const Icon(
-                      Icons.delete_sweep,
-                      color: Colors.white,
-                    ),
+                    icon: const Icon(Icons.delete_sweep, color: Colors.white),
                     tooltip: 'مسح ذاكرة الأجسام',
                   ),
-
                   IconButton(
-                    onPressed:
-                    widget.cameras.length > 1
-                        ? _switchCamera
-                        : null,
-                    icon: const Icon(
-                      Icons.cameraswitch,
-                      color: Colors.white,
-                    ),
+                    onPressed: widget.cameras.length > 1 ? _switchCamera : null,
+                    icon: const Icon(Icons.cameraswitch, color: Colors.white),
                   ),
                 ],
               ),
@@ -1388,22 +1492,14 @@ class _DetectionScreenState
             Expanded(
               child: Center(
                 child: AspectRatio(
-                  aspectRatio:
-                  1 / controller.value.aspectRatio,
+                  aspectRatio: 1 / controller.value.aspectRatio,
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
                       if (AppConstants.showCameraPreviewForDebug)
                         CameraPreview(controller)
                       else
-                      // المستخدم الفعلي (كفيف) ما بيشوف هذا إطلاقًا
-                      // — خلفية بسيطة بدل الفيديو الحي توفّر تركيب
-                      // رسوميات حقيقي بدون أي خسارة وظيفية.
                         Container(color: Colors.black),
-                      // مغلّف بـ ValueListenableBuilder (نفس أسلوب
-                      // النقطة المضيئة بـ basira_home_screen.dart) —
-                      // فيعيد رسم صندوق المربعات بس كل تِك (60fps)،
-                      // بدون إعادة بناء الشاشة كاملة كل مرة.
                       ValueListenableBuilder<List<DetectedObject>>(
                         valueListenable: _animatedDetections,
                         builder: (context, animatedList, _) {
@@ -1414,6 +1510,20 @@ class _DetectionScreenState
                               imageHeight: _imageHeight,
                               labelTranslator: toArabicLabel,
                               proximityLabels: _proximityLabels,
+                              touchedKey: _touchedObjectKey,
+                            ),
+                          );
+                        },
+                      ),
+                      ValueListenableBuilder<List<HandLandmark>>(
+                        valueListenable: _animatedHandPoints,
+                        builder: (context, animatedHandPoints, _) {
+                          return CustomPaint(
+                            painter: HandSkeletonPainter(
+                              landmarks: animatedHandPoints,
+                              imageWidth: _imageWidth,
+                              imageHeight: _imageHeight,
+                              isFist: _isFistForDisplay,
                             ),
                           );
                         },
@@ -1428,6 +1538,46 @@ class _DetectionScreenState
               labelTranslator: toArabicLabel,
               proximityLabels: _proximityLabels,
             ),
+            if (_recognizedSpeechText.isNotEmpty || _isListeningForCommand)
+              Container(
+                width: double.infinity,
+                constraints: const BoxConstraints(minHeight: 38, maxHeight: 72),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 7,
+                ),
+                color: Colors.blueGrey.shade900,
+                child: Row(
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Icon(
+                      _isListeningForCommand
+                          ? Icons.mic
+                          : Icons.record_voice_over,
+                      size: 18,
+                      color: _isListeningForCommand
+                          ? Colors.redAccent
+                          : Colors.tealAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _recognizedSpeechText.isEmpty
+                            ? 'استمع...'
+                            : _recognizedSpeechText,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        textDirection: TextDirection.rtl,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -1453,25 +1603,44 @@ class _DetectionScreenState
             ),
             const SizedBox(width: 12),
           ],
+          if (AppConstants.voiceCommandsEnabled) ...[
+            // ⚠️ Listener (لا "يبلع" أحداث اللمس، بس يراقبها بالتوازي
+            // مع الزر) يلتقط لحظة الضغط ولحظة الرفع بالضبط — أدق من
+            // FloatingActionButton.onPressed العادي (اللي بس يعرف
+            // "انضغط" ككل، مو "متى ضُغط" و"متى اتُرفع" منفصلين).
+            // onPressed هون فارغ عمدًا (بس حتى يبان الزر "مفعّل"
+            // بصريًا بلونه الكامل) — كل المنطق الفعلي بالـListener.
+            Listener(
+              onPointerDown: (_) => _onMicPressDown(),
+              onPointerUp: (_) => _onMicPressUp(),
+              onPointerCancel: (_) => _onMicPressCancel(),
+              child: FloatingActionButton(
+                heroTag: 'voice_command_fab',
+                onPressed: () {},
+                backgroundColor: _isListeningForCommand
+                    ? Colors.redAccent
+                    : (_speech.isAvailable ? Colors.teal : Colors.grey),
+                tooltip: 'اضغط مطوّلًا واسأل بصوتك',
+                child: const Icon(Icons.mic, color: Colors.white),
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
           if (_isRunning) ...[
             FloatingActionButton(
               heroTag: 'distance_fab',
-              onPressed: _isMeasuringDistance
-                  ? null
-                  : _requestDistance,
-              backgroundColor: _depth.isReady
-                  ? Colors.blueAccent
-                  : Colors.grey,
+              onPressed: _isMeasuringDistance ? null : _requestDistance,
+              backgroundColor: _depth.isReady ? Colors.blueAccent : Colors.grey,
               tooltip: 'ما المسافة؟',
               child: _isMeasuringDistance
                   ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
                   : const Icon(Icons.straighten),
             ),
             const SizedBox(width: 12),
@@ -1479,13 +1648,8 @@ class _DetectionScreenState
           FloatingActionButton(
             heroTag: 'toggle_fab',
             onPressed: _toggleDetection,
-            backgroundColor:
-            _isRunning ? Colors.red : Colors.green,
-            child: Icon(
-              _isRunning
-                  ? Icons.stop
-                  : Icons.play_arrow,
-            ),
+            backgroundColor: _isRunning ? Colors.red : Colors.green,
+            child: Icon(_isRunning ? Icons.stop : Icons.play_arrow),
           ),
         ],
       ),

@@ -1,3 +1,7 @@
+
+
+import '../../../core/utils/arabic_text_utils.dart' as utils;
+
 /// ترجمة أسماء فئات YOLO (80 فئة قياسية بموديل COCO) للعربي.
 /// لإضافة فئة جديدة لاحقًا: أضف سطر واحد بهذا القاموس فقط.
 const Map<String, String> labelsAr = {
@@ -52,3 +56,47 @@ const Map<String, String> labelsAr = {
 String toArabicLabel(String englishLabel) {
   return labelsAr[englishLabel] ?? englishLabel;
 }
+
+/// توحيد بسيط لأشكال الحروف العربية المختلفة (همزات، تاء مربوطة، ألف
+/// مقصورة) ومسافات زائدة. يستخدمه هذا الملف (englishLabelForArabic)
+/// وأيضًا voice_command_parser.dart لمطابقة نصوص STT، اللي غالبًا
+/// ترجع بدون تشكيل وباختلافات إملائية بسيطة حسب دقة التعرّف.
+String normalizeArabicText(String input) => utils.normalizeArabic(input);
+
+/// يبحث عن الاسم الإنجليزي المطابق لكلمة أو جملة عربية (مثلًا نص خام
+/// من STT). يقارن بعد التطبيع أولًا (تطابق كامل)، ثم يجرّب مطابقة
+/// جزئية (احتواء) كخيار ثانٍ — يفيد لو النص كان جملة كاملة تحتوي اسم
+/// الجسم ("الكرسي" بدل "كرسي"، بسبب أل التعريف). يرجّع null لو ما لقى
+/// أي تطابق — الاستدعاء المسؤول (parseVoiceCommand) يتعامل مع هذي
+/// الحالة كأمر غير مفهوم، مو خطأ.
+String? englishLabelForArabic(String arabicText) {
+  final normalized = normalizeArabicText(arabicText);
+  if (normalized.isEmpty) return null;
+
+  // 1) تطابق تام
+  for (final entry in labelsAr.entries) {
+    if (normalizeArabicText(entry.value) == normalized) {
+      return entry.key;
+    }
+  }
+
+  // 2) ✅ جديد: تطابق كلمة-كلمة (يحل "الحاسوب" ↔ "حاسوب محمول")
+  final inputWords = normalized
+      .split(' ')
+      .where((w) => w.length > 1 && w != '.')  // تجاهل الحروف المفردة والفواصل
+      .toList();
+
+  for (final entry in labelsAr.entries) {
+    final labelWords = normalizeArabicText(entry.value).split(' ');
+
+    // إذا أي كلمة من الإدخال تطابق أي كلمة من الاسم
+    if (labelWords.any((lw) => inputWords.contains(lw))) {
+      return entry.key;
+    }
+  }
+
+  return null;
+}
+
+
+

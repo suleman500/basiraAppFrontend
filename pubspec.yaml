@@ -35,9 +35,22 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.9
   camera: ^0.12.0+2
-  image: ^4.8.0
+  image: ^4.3.0
   tflite_flutter: ^0.12.1
   flutter_tts: ^4.2.5
+  # ⚠️ الانتقال من Vosk إلى sherpa_onnx (next-gen Kaldi + ONNX runtime):
+  # بعد سلسلة أخطاء متتالية مع vosk_flutter/vosk_flutter_2 (تعارض http،
+  # namespace ناقص، minSdk 30، compileSdk 33 قديم) تبيّن إن جذر المشكلة
+  # هو حزم Vosk لفلاتر قديمة وغير محدَّثة. sherpa_onnx نشطة الصيانة
+  # (تحديثات مستمرة لحد الآن) ومحلية بالكامل بدون إنترنت وبدون أي خدمة
+  # Google — بديل مباشر وأكثر استقرارًا.
+  #
+  # ⚠️ فرق جوهري عن Vosk: sherpa_onnx ما يدير الميكروفون داخليًا — يوفر
+  # فقط محرك التعرّف (Recognizer)، ونحن نلتقط الصوت بأنفسنا عبر حزمة
+  # `record` ونمرره له يدويًا. هذا يعني SpeechService لازم يُعاد كتابته
+  # (مو بس تغيير اسم استيراد زي ما صار بين vosk_flutter وvosk_flutter_2).
+  sherpa_onnx: ^1.12.24
+  record: ^7.1.1
 
   video_player: ^2.9.2
 
@@ -57,6 +70,7 @@ dependencies:
   shared_preferences: ^2.5.5
   uuid: ^4.6.0
   sensors_plus: ^7.1.0
+  arabic_search: ^0.2.3
 
 dev_dependencies:
   flutter_test:
@@ -69,8 +83,10 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   build_runner: ^2.15.1
-  freezed: ^4.0.0-dev.3
+  freezed: 3.2.5
   json_serializable: ^6.14.1
+
+
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -87,6 +103,9 @@ flutter:
   assets:
     - assets/models/model.tflite
     - assets/models/yolo26n-depth.tflite
+    - assets/models/sherpa-ar-stt/encoder_model.ort
+    - assets/models/sherpa-ar-stt/decoder_model_merged.ort
+    - assets/models/sherpa-ar-stt/tokens.txt
     - assets/labels/labels.txt
     - assets/stitch/basira_space_background.mp4
   # assets:
