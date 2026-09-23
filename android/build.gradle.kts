@@ -29,6 +29,7 @@ subprojects {
                 namespace = project.group.toString()
             }
 
+
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
@@ -38,6 +39,27 @@ subprojects {
             compilerOptions {
                 jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
             }
+        }
+    }
+}
+
+// ⚠️ إصلاح مؤقت لمشكلة توافق معروفة بين camera_android_camerax وGradle
+// 9.x: مكتبة camera-core تحتاج androidx.concurrent:concurrent-futures
+// وقت الترجمة (compile)، لكن الاعتماد معرّف "runtime scope" بس بملفها
+// الأصلي. Gradle 8.x كان يتساهل ويرفّعه تلقائيًا لـcompile classpath؛
+// Gradle 9.x صار أكثر صرامة وما بيعمل هذا الترفيع، فتفشل الترجمة برسالة
+// "class file for androidx.concurrent.futures.CallbackToFutureAdapter
+// not found". نحقن الاعتماد هون صراحة بدل ما نعدّل الحزمة نفسها (أي
+// تعديل مباشر جوا pub cache بينمسح تلقائيًا بأول flutter pub get). لو
+// طلعت نسخة لاحقة من camera_android_camerax فيها هذا الإصلاح رسميًا،
+// ممكن تشيل هذا البلوك بأمان وقتها.
+subprojects {
+    afterEvaluate {
+        if (project.name == "camera_android_camerax") {
+            project.dependencies.add(
+                "implementation",
+                "androidx.concurrent:concurrent-futures:1.2.0",
+            )
         }
     }
 }

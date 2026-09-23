@@ -77,7 +77,7 @@ class AppConstants {
   /// أعلى (6-8) لو الأجسام حواليك عادةً ثابتة (كرسي، طاولة) ومش محتاجة
   /// تحديث فوري كل نص ثانية — بس تذكّر: رقم أعلى = رد فعل أبطأ لجسم
   /// يتحرك فجأة أو يدخل الكادر.
-  static const int frameSkip = 4;
+  static const int frameSkip = 2;
 
   /// عتبة تطابق البصمة اللونية لاعتبار جسمين "نفس الجسم". رُفعت من
   /// 0.16 إلى 0.22 — القيمة القديمة كانت حسّاسة زيادة لأي تغيّر بسيط
@@ -162,6 +162,14 @@ class AppConstants {
   /// detectionInputSize/depthInputSize كل بموضعه.
   static const int modelInputSize = detectionInputSize;
 
+  // ---------------- الموديلات: TTS العربي (sherpa_onnx / ar_JO-kareem) ----------------
+
+  /// مجلد ملفات موديل TTS العربي المحلي (vits-piper-ar_JO-kareem-medium)
+  /// جوا assets — يشمل الموديل نفسه (.onnx)، tokens.txt، ومجلد
+  /// espeak-ng-data كامل. راجع sherpa_tts_adapter.dart لتفاصيل كيفية
+  /// نسخ هالملفات لمسار حقيقي بالجهاز وقت init().
+  static const String ttsArAssetPrefix = 'assets/models/tts-ar/';
+
   // ---------------- تحسين التتبع والأداء ----------------
 
   /// إبقاء آخر نتيجة ظاهرة إذا فشل الكشف مؤقتًا.
@@ -229,6 +237,20 @@ class AppConstants {
   /// تشغيل الصوت افتراضيًا.
   static const bool voiceEnabledByDefault = true;
 
+  /// 🔀 التبديل بين محرّك TTS: false = flutter_tts (النظامي، مستقر
+  /// ومختبَر تمامًا). true = sherpa_onnx.OfflineTts المحلي الجديد
+  /// (صوت ar_JO-kareem، جودة أفضل، بس أحدث وأقل اختبارًا). لو صار أي
+  /// مشكلة بالمحرك الجديد، رجّعها false فورًا بدون أي تعديل كود
+  /// تاني — نفس فلسفة useNativeDetector بالضبط.
+  static const bool useSherpaTts = true;
+
+  /// مدة دفعة الكاميرا القصيرة (Voice-triggered burst scan) — أطول
+  /// شوي من زمن معالجة إطار وحدة (~450-650ms حسب محرك الكشف) لضمان
+  /// معالجة إطار أو اثنين على الأقل قبل الإغلاق التلقائي. جرّب
+  /// ترفعها لو حسّيت الأوامر الصوتية أحيانًا ما بتلاقي أجسام موجودة
+  /// فعليًا قدام الكاميرا (يعني الوقت مو كافي).
+  static const Duration voiceBurstScanDuration = Duration(milliseconds: 1500);
+
   // ---------------- الأوامر الصوتية (Speech-to-Text) ----------------
   // طبقة استماع "اضغط وتكلّم" منفصلة تمامًا عن منطق تفسير الأوامر
   // (راجع speech_service.dart وvoice_command_parser.dart). تعتمد على
@@ -249,6 +271,44 @@ class AppConstants {
   /// Huawei الحديثة). ثوابت voskModelAssetPath/voskSampleRate أُزيلت
   /// نهائيًا — مسارات موديل sherpa (Moonshine v2 العربي) ثابتة الآن
   /// جوا SpeechService نفسه (_assetDir بالكلاس)، مو هون.
+
+  // ---------------- باك-اند الذكاء الاصطناعي (فهم + صياغة الردود) ----------------
+  // طبقة اختيارية بالكامل — التطبيق يشتغل 100% محليًا بدونها (القوالب
+  // الثابتة + voice_command_parser.dart المحلي). لما تكون مفعّلة
+  // ومتوفر نت، تُستخدم فقط لحالتين: (1) fallback لما الفهم المحلي
+  // يفشل (UnknownCommand)، و(2) صياغة ردود أطبع + صوت جاهز من
+  // Google TTS بدل القوالب الثابتة. راجع ai_backend_client.dart
+  // وai_command_rewriter.dart وai_response_composer.dart.
+
+  /// 🔀 تفعيل كامل لطبقة الـAI — نفس أسلوب باقي الأعلام بالملف
+  /// (voiceCommandsEnabled، handTrackingEnabled...).
+  ///
+  /// ✅ فعّلناها الآن بعد ما تأكدنا الباك-اند شغّال (اختُبر عبر
+  /// Postman بنجاح — rewrite-command وcompose-and-speak). رجّعها
+  /// false فورًا لو صار أي سلوك غريب، بدون أي تعديل كود تاني.
+  static const bool aiBackendEnabled = true;
+
+  /// عنوان الباك-اند الخاص فينا (Node.js/Express، بورت 3000 حسب
+  /// server.js).
+  ///
+  /// ⚠️ خمّنت هالـIP بناءً على serverBaseUrl تحت (نفس الجهاز، بورت
+  /// مختلف بس) — لازم تتأكد إنه صحيح فعليًا: افتح PowerShell على
+  /// الكمبيوتر اللي شغّال عليه الباك-اند، اكتب `ipconfig`، ودوّر على
+  /// "IPv4 Address". لو مختلف عن هيك، بدّله هون.
+  static const String aiBackendBaseUrl = 'http://192.168.43.165:3000';
+
+  /// مفتاح الوصول للباك-اند.
+  ///
+  /// ⚠️⚠️ لازم تعبّيها بنفسك — هاي بالضبط نفس القيمة اللي حطيتها
+  /// بمتغيّر APP_API_KEY جوا ملف .env تبع الباك-اند. افتحه وانسخها
+  /// من هناك، والصقها هون بين علامتي التنصيص تحت. لو تركتها فاضية،
+  /// كل طلب بيفشل بهدوء (401 من الباك-اند) والتطبيق بيرجع تلقائيًا
+  /// للقوالب المحلية — يعني ما رح "ينكسر" شي، بس ميزة الـAI ما رح
+  /// تشتغل لحد ما تعبّيها.
+  ///
+  /// ⚠️ ملاحظة أمان: هالمفتاح بيصير جوا الـAPK وممكن يُستخرج. لاحقًا
+  /// وقت النشر الفعلي، الأفضل تمريره عبر --dart-define وقت البناء.
+  static const String aiBackendApiKey = 'mNQfOwMJGDKSun47IHCYid9koFB2xzgectLsjT051Vpr6U8PqhWZAR3XyablvE';
 
   // ==================== Backend Server ====================
   // يبقى صالحًا لتجميع بيانات التدريب (Roboflow) — التدريب الفعلي فقط

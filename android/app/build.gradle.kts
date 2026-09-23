@@ -32,6 +32,23 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // ⚠️ إصلاح منفصل تمامًا عن موضوع compileSdk: sherpa_onnx وonnxruntime
+    // (الحزمتين مع بعض بمشروعنا) كل وحدة فيهم بتجيب نسخة خاصة فيها من
+    // نفس ملف libonnxruntime.so الأصلي (ONNX Runtime native). Gradle
+    // كان يفشل لأنه ما بيعرف يختار وحدة منهم وقت دمج مكتبات التطبيق
+    // النهائي. pickFirsts هون بتقوله: "خذ أول نسخة تلاقيها وتجاهل
+    // الباقي" بدل ما تفشل. هذا الإصلاح يبقى مطلوبًا بغض النظر عن حل
+    // مشكلة compileSdk (المضبوطة هلق مركزيًا بـandroid/build.gradle.kts
+    // الجذري).
+    packaging {
+        jniLibs {
+            pickFirsts += listOf(
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so"
+            )
+        }
+    }
 }
 
 kotlin {

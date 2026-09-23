@@ -33,6 +33,11 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 /// القرص — مو مسار asset افتراضي جوا الـ APK. لهيك init() ينسخ ملفات
 /// الموديل الثلاثة من assets إلى مجلد داخلي حقيقي (Application Support
 /// Directory) أول مرة بس، وبعدين يشتغل من هناك بكل مرة.
+///
+/// ⚠️ كل نص خارج من المحرك (جزئي أو نهائي) يمرّ على [removeTashkeel]
+/// قبل ما يوصل لـonText — إزالة الحركات (فتحة/ضمة/كسرة/شدة/سكون/
+/// تنوين/مدة/همزات فوق وتحت) عشان مطابقة الأوامر لاحقًا بـ
+/// VoiceCommandParser تكون أدق (نص بدون حركات أسهل بالمقارنة الحرفية).
 class SpeechService {
   final void Function(String text, bool isFinal)? onText;
 
@@ -246,7 +251,6 @@ class SpeechService {
   String? _decodeBufferedAudio() {
     if (_pcmChunks.isEmpty || _recognizer == null) return null;
 
-
     final totalLength = _pcmChunks.fold<int>(0, (sum, c) => sum + c.length);
     if (totalLength == 0) return null;
 
@@ -264,7 +268,7 @@ class SpeechService {
       stream.acceptWaveform(samples: samples, sampleRate: _sampleRate);
       _recognizer!.decode(stream);
       final result = _recognizer!.getResult(stream);
-      return result.text.trim();
+      return removeTashkeel(result.text.trim());
     } catch (e) {
       debugPrint('⚠️ SpeechService(sherpa_onnx): خطأ أثناء decode: $e');
       return null;
@@ -303,13 +307,16 @@ class SpeechService {
   }
 }
 
-
+/// إزالة الحركات العربية (تشكيل) من النص — بدون توحيد أشكال الحروف
+/// (الألف/الياء/التاء تضل بشكلها الأصلي، بعكس normalizeArabic لو
+/// استخدمت حزمة خارجية لاحقًا).
+///
+/// نطاق الحركات العربية في Unicode:
+/// \u064B-\u0652: تنوين فتح، تنوين ضم، تنوين كسر، فتحة، ضمة، كسرة، شدة، سكون
+/// \u0653-\u0655: مدة، همزة فوق، همزة تحت
 String removeTashkeel(String input) {
   if (input.isEmpty) return input;
 
-  // نطاق الحركات العربية في Unicode
-  // \u064B-\u0652: تنوين فتح، تنوين ضم، تنوين كسر، فتحة، ضمة، كسرة، شدة، سكون
-  // \u0653-\u0655: مد، همزة فوق، همزة تحت
   final tashkeelPattern = RegExp(r'[\u064B-\u0652\u0653-\u0655]');
 
   var result = input.replaceAll(tashkeelPattern, '');
