@@ -1,64 +1,104 @@
 import 'ai_backend_client.dart';
 import 'object_summary.dart';
 
-/// نتيجة صياغة + تركيب صوتي من الباك-اند. ⚠️ [audioBase64] ممكن
-/// يكون null حتى لو [reply] موجود — راجع تعليق composeAndSpeak.js
-/// بالباك-اند: الصياغة ممكن تنجح والتركيب الصوتي يفشل لحاله. المستدعي
-/// (الشاشة) لازم يتحقق من الاثنين بشكل منفصل: لو فيه صوت، شغّله؛
-/// لو ما فيه بس فيه نص، انطقه بمحرك محلي بدل ما يستسلم كليًا.
+/// نتيجة صياغة الرد وتركيب الصوت عبر الباك اند.
+///
+/// [reply] هو النص المصاغ من الذكاء الاصطناعي.
+/// [audioBase64] هو ملف الصوت الخارجي بصيغة MP3 مشفرًا بـ Base64.
 class AiComposedSpeech {
   final String? reply;
   final String? audioBase64;
 
-  const AiComposedSpeech({this.reply, this.audioBase64});
+  const AiComposedSpeech({
+    this.reply,
+    this.audioBase64,
+  });
 }
 
-/// يصوغ ردًا طبيعيًا **ويحوّله صوت** عبر الباك-اند بنداء وحد — يستقبل
-/// النص المنطوق (للسياق) + قائمة DetectedObjectSummary (بيانات خام
-/// رقمية بس، بدون أي صورة أو فيديو — راجع object_summary.dart).
+/// يطلب من الباك اند:
 ///
-/// ⚠️ فرق جوهري عن ai_command_rewriter.dart: هالاستدعاء يصير *بعد*
-/// ما قرار "شو الأمر المطلوب" خلص أصلًا (محليًا أو عبر إعادة الصياغة)،
-/// وبعد ما عنا بيانات فعلية (من كاميرا أو من الذاكرة) نصوغ منها رد.
-/// الهدف هون صياغة الجملة النهائية + نطقها — مو فهم القصد.
+/// 1. صياغة رد عربي أفضل.
+/// 2. تحويل الرد إلى صوت خارجي.
+///
+/// إذا كان الباك اند غير متوفر أو لا يوجد إنترنت أو تأخر الرد، ترجع
+/// الدالة null، وعندها يستخدم التطبيق الرد والصوت المحليين.
 class AiResponseComposer {
   final AiBackendClient client;
 
   const AiResponseComposer(this.client);
 
-  /// يحاول صياغة رد طبيعي + تركيبه صوتيًا عبر الباك-اند. يرجّع null
-  /// لو فشل الاتصال كليًا أو الباك-اند ما قدر يصوغ رد واثوق — بهاي
-  /// الحالة المستدعي (الشاشة) بيرجع لصياغته الثابتة المحلية + محرك
-  /// النطق المحلي. هذا يضمن التطبيق يشتغل 100% حتى لو الباك-اند غير
-  /// جاهز أو النت مقطوع.
+  /// يرسل طلب صياغة وصوت خارجي.
   ///
-  /// العقد المتوقّع من الباك-اند (POST /v1/voice/compose-and-speak):
-  /// الطلب: {"text": "<النص المنطوق الخام>",
-  ///         "objects": [<DetectedObjectSummary.toJson() لكل جسم>]}
-  /// الرد: {"reply": "<جملة عربية>" أو null,
-  ///        "audioBase64": "<صوت MP3 بصيغة base64>" أو null}
+  /// مسار الباك اند المطلوب:
+  ///
+  /// POST /v1/voice/compose-and-speak
+  ///
+  /// الطلب:
+  ///
+  /// {
+  ///   "text": "النص الأصلي",
+  ///   "objects": []
+  /// }
+  ///
+  /// الرد المتوقع:
+  ///
+  /// {
+  ///   "reply": "الكرسي أمامك على يمينك",
+  ///   "audioBase64": "...."
+  /// }
+  ///
+  /// مهلة الصوت أطول من بقية الطلبات؛ لأن الباك اند قد يحتاج إلى:
+  ///
+  /// - الاتصال بمزود الذكاء الاصطناعي
+  /// - صياغة النص
+  /// - طلب الصوت الخارجي
+  /// - تحويل الملف وإرساله للتطبيق
   Future<AiComposedSpeech?> compose({
     required String rawText,
     required List<DetectedObjectSummary> objects,
   }) async {
-    final response = await client.post('/v1/voice/compose-and-speak', {
-      'text': rawText,
-      'objects': objects.map((o) => o.toJson()).toList(),
-    });
+    final response = await client.post(
+      '/v1/voice/compose-and-speak',
+      {
+        'text': rawText,
+        'objects': objects.map((object) => object.toJson()).toList(),
+      },
+      timeout: const Duration(seconds: 30),
+    );
 
-    if (response == null) return null;
+    // الباك اند غير متوفر أو الإنترنت غير موجود.
+    if (response == null) {
+      return null;
+    }
 
-    final reply = response['reply'] as String?;
-    final audioBase64 = response['audioBase64'] as String?;
+    final reply = _readString(response['reply']);
+    final audioBase64 = _readString(response['audioBase64']);
 
     final hasReply = reply != null && reply.trim().isNotEmpty;
-    final hasAudio = audioBase64 != null && audioBase64.isNotEmpty;
+    final hasAudio = audioBase64 != null && audioBase64.trim().isNotEmpty;
 
-    if (!hasReply && !hasAudio) return null;
+    // لا يوجد نص ولا ملف صوت.
+    if (!hasReply && !hasAudio) {
+      return null;
+    }
 
     return AiComposedSpeech(
       reply: hasReply ? reply : null,
       audioBase64: hasAudio ? audioBase64 : null,
     );
+  }
+
+  String? _readString(dynamic value) {
+    if (value is! String) {
+      return null;
+    }
+
+    final result = value.trim();
+
+    if (result.isEmpty || result == 'null') {
+      return null;
+    }
+
+    return result;
   }
 }

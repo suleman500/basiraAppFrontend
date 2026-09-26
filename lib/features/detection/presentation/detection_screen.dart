@@ -1214,7 +1214,13 @@ class _DetectionScreenState extends State<DetectionScreen>
         final active = memory.activeRecords;
 
         if (active.isEmpty) {
-          _voice.speakNow('ما في شي واضح قدامك حاليًا');
+          const localSentence = 'ما في شي واضح قدامك حاليًا';
+
+          if (await _trySpeakViaAi(localSentence)) {
+            return;
+          }
+
+          await _voice.speakNow(localSentence);
           return;
         }
 
@@ -1318,10 +1324,46 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// true لو نجح التشغيل فعليًا.
   Future<bool> _playCloudAudio(String audioBase64) async {
     try {
-      final bytes = base64Decode(audioBase64);
+      var cleanBase64 = audioBase64.trim();
+
+      // دعم الردين:
+      //
+      // 1. Base64 مباشر
+      // 2. data:audio/mpeg;base64,....
+      if (cleanBase64.startsWith('data:')) {
+        final commaIndex = cleanBase64.indexOf(',');
+
+        if (commaIndex != -1) {
+          cleanBase64 = cleanBase64.substring(commaIndex + 1);
+        }
+      }
+
+      if (cleanBase64.isEmpty) {
+        debugPrint('⚠️ صوت السحابة فارغ');
+        return false;
+      }
+
+      final bytes = base64Decode(cleanBase64);
+
+      if (bytes.isEmpty) {
+        debugPrint('⚠️ ملف صوت السحابة لا يحتوي بيانات');
+        return false;
+      }
+
+      await _cloudAudioPlayer.stop();
+
       await _cloudAudioPlayer.play(
-        BytesSource(bytes, mimeType: 'audio/mpeg'),
+        BytesSource(
+          bytes,
+          mimeType: 'audio/mpeg',
+        ),
       );
+
+      debugPrint(
+        '🔊 تم تشغيل الصوت الخارجي بنجاح '
+            '(${bytes.length} bytes)',
+      );
+
       return true;
     } catch (e) {
       debugPrint('⚠️ فشل تشغيل صوت السحابة: $e');

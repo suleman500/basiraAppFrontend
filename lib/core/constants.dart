@@ -1,3 +1,5 @@
+import 'secrets.dart';
+
 /// ثوابت عامة للمشروع كامل.
 ///
 /// محدَّث وفق "الخطة الجديدة المتفق عليها" (25 أغسطس 2026):
@@ -295,7 +297,7 @@ class AppConstants {
   /// مختلف بس) — لازم تتأكد إنه صحيح فعليًا: افتح PowerShell على
   /// الكمبيوتر اللي شغّال عليه الباك-اند، اكتب `ipconfig`، ودوّر على
   /// "IPv4 Address". لو مختلف عن هيك، بدّله هون.
-  static const String aiBackendBaseUrl = 'http://192.168.43.165:3000';
+  static const String aiBackendBaseUrl = AppSecrets.aiBackendBaseUrl;
 
   /// مفتاح الوصول للباك-اند.
   ///
@@ -308,12 +310,12 @@ class AppConstants {
   ///
   /// ⚠️ ملاحظة أمان: هالمفتاح بيصير جوا الـAPK وممكن يُستخرج. لاحقًا
   /// وقت النشر الفعلي، الأفضل تمريره عبر --dart-define وقت البناء.
-  static const String aiBackendApiKey = 'mNQfOwMJGDKSun47IHCYid9koFB2xzgectLsjT051Vpr6U8PqhWZAR3XyablvE';
+  static const String aiBackendApiKey = AppSecrets.aiBackendApiKey;
 
   // ==================== Backend Server ====================
   // يبقى صالحًا لتجميع بيانات التدريب (Roboflow) — التدريب الفعلي فقط
   // ينتقل من مكتبة ultralytics إلى سكربتات YOLOX (راجع الخطة، المرحلة 4).
-  static const String serverBaseUrl = 'http://192.168.43.165:5000';
+  static const String serverBaseUrl = AppSecrets.serverBaseUrl;
   static const String uploadEndpoint = '/upload';
   static const String trainEndpoint = '/train';
   static const String downloadModelEndpoint = '/download_model';

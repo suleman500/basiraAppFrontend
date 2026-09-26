@@ -1,9 +1,6 @@
-
-
 import '../../../core/utils/arabic_text_utils.dart' as utils;
 
-/// ترجمة أسماء فئات YOLO (80 فئة قياسية بموديل COCO) للعربي.
-/// لإضافة فئة جديدة لاحقًا: أضف سطر واحد بهذا القاموس فقط.
+/// ترجمة أسماء فئات YOLO للعربي.
 const Map<String, String> labelsAr = {
   'person': 'شخص',
   'bicycle': 'دراجة هوائية',
@@ -51,52 +48,143 @@ const Map<String, String> labelsAr = {
   'door': 'باب',
 };
 
-/// يرجّع الاسم العربي لو موجود بالقاموس، وإلا يرجّع الاسم الإنجليزي
-/// كما هو (أفضل من رمي خطأ أو إخفاء الجسم بالكامل).
+/// يرجّع الاسم العربي إذا كان موجودًا بالقاموس،
+/// وإلا يرجّع الاسم الإنجليزي كما هو.
 String toArabicLabel(String englishLabel) {
   return labelsAr[englishLabel] ?? englishLabel;
 }
 
-/// توحيد بسيط لأشكال الحروف العربية المختلفة (همزات، تاء مربوطة، ألف
-/// مقصورة) ومسافات زائدة. يستخدمه هذا الملف (englishLabelForArabic)
-/// وأيضًا voice_command_parser.dart لمطابقة نصوص STT، اللي غالبًا
-/// ترجع بدون تشكيل وباختلافات إملائية بسيطة حسب دقة التعرّف.
-String normalizeArabicText(String input) => utils.normalizeArabic(input);
+/// توحيد النص العربي قبل المقارنة.
+String normalizeArabicText(String input) {
+  return utils.normalizeArabic(input);
+}
 
-/// يبحث عن الاسم الإنجليزي المطابق لكلمة أو جملة عربية (مثلًا نص خام
-/// من STT). يقارن بعد التطبيع أولًا (تطابق كامل)، ثم يجرّب مطابقة
-/// جزئية (احتواء) كخيار ثانٍ — يفيد لو النص كان جملة كاملة تحتوي اسم
-/// الجسم ("الكرسي" بدل "كرسي"، بسبب أل التعريف). يرجّع null لو ما لقى
-/// أي تطابق — الاستدعاء المسؤول (parseVoiceCommand) يتعامل مع هذي
-/// الحالة كأمر غير مفهوم، مو خطأ.
+/// تقسيم النص إلى كلمات بعد التطبيع.
+List<String> _normalizedWords(String input) {
+  return normalizeArabicText(input)
+      .split(RegExp(r'\s+'))
+      .map((word) => word.trim())
+      .where(
+        (word) =>
+    word.isNotEmpty &&
+        word != '.' &&
+        word != '،' &&
+        word != '؟' &&
+        word != '!',
+  )
+      .toList();
+}
+
+/// إزالة "الـ" من بداية الكلمة.
+///
+/// أمثلة:
+/// كرسي  -> كرسي
+/// الكرسي -> كرسي
+/// باب   -> باب
+/// الباب -> باب
+String _withoutDefiniteArticle(String word) {
+  if (word.startsWith('ال') && word.length > 2) {
+    return word.substring(2);
+  }
+
+  return word;
+}
+
+/// مقارنة كلمتين عربيتين مع أو بدون "الـ".
+bool _sameArabicWord(String first, String second) {
+  final firstNormalized = _withoutDefiniteArticle(
+    normalizeArabicText(first),
+  );
+
+  final secondNormalized = _withoutDefiniteArticle(
+    normalizeArabicText(second),
+  );
+
+  return firstNormalized == secondNormalized;
+}
+
+/// مقارنة اسمين عربيين كلمة بكلمة.
+///
+/// أمثلة:
+/// كرسي == الكرسي
+/// باب == الباب
+/// طاولة طعام == الطاولة الطعام
+bool _sameArabicLabel(String first, String second) {
+  final firstWords = _normalizedWords(first);
+  final secondWords = _normalizedWords(second);
+
+  if (firstWords.length != secondWords.length) {
+    return false;
+  }
+
+  for (var i = 0; i < firstWords.length; i++) {
+    if (!_sameArabicWord(firstWords[i], secondWords[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/// يبحث عن الاسم الإنجليزي المطابق لنص عربي.
+///
+/// يدعم:
+/// - كرسي
+/// - الكرسي
+/// - وين الكرسي
+/// - باب
+/// - الباب
+/// - وين الباب
+/// - طاولة الطعام
+/// - الطاولة الطعام
+/// - وين الطاولة
 String? englishLabelForArabic(String arabicText) {
-  final normalized = normalizeArabicText(arabicText);
-  if (normalized.isEmpty) return null;
+  final normalized = normalizeArabicText(arabicText).trim();
 
-  // 1) تطابق تام
+  if (normalized.isEmpty) {
+    return null;
+  }
+
+  // 1) تطابق مباشر، مثل:
+  // كرسي == كرسي
   for (final entry in labelsAr.entries) {
     if (normalizeArabicText(entry.value) == normalized) {
       return entry.key;
     }
   }
 
-  // 2) ✅ جديد: تطابق كلمة-كلمة (يحل "الحاسوب" ↔ "حاسوب محمول")
-  final inputWords = normalized
-      .split(' ')
-      .where((w) => w.length > 1 && w != '.')  // تجاهل الحروف المفردة والفواصل
-      .toList();
+  final inputWords = _normalizedWords(normalized);
 
+  if (inputWords.isEmpty) {
+    return null;
+  }
+
+  // 2) تطابق اسم كامل مع أو بدون "الـ"، مثل:
+  // الكرسي == كرسي
+  // الطاولة الطعام == طاولة طعام
   for (final entry in labelsAr.entries) {
-    final labelWords = normalizeArabicText(entry.value).split(' ');
-
-    // إذا أي كلمة من الإدخال تطابق أي كلمة من الاسم
-    if (labelWords.any((lw) => inputWords.contains(lw))) {
+    if (_sameArabicLabel(normalized, entry.value)) {
       return entry.key;
+    }
+  }
+
+  // 3) البحث عن اسم الجسم داخل الجملة، مثل:
+  // وين الكرسي
+  // فين الباب
+  // بدي أروح للطاولة
+  for (final inputWord in inputWords) {
+    for (final entry in labelsAr.entries) {
+      final labelWords = _normalizedWords(entry.value);
+
+      final found = labelWords.any(
+            (labelWord) => _sameArabicWord(inputWord, labelWord),
+      );
+
+      if (found) {
+        return entry.key;
+      }
     }
   }
 
   return null;
 }
-
-
-
