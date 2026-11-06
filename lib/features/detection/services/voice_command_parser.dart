@@ -244,9 +244,6 @@ int _levenshteinDistance(String a, String b) {
 /// يفحص كل كلمة بالجملة لحالها أولًا (أدق)، ثم الجملة كاملة كخيار
 /// أخير (يفيد لو اسم الجسم بالعربي أكثر من كلمة، مثل "طاولة طعام").
 String? _extractKnownObjectLabel(List<String> words) {
-  for (final word in words) {
-    final match = englishLabelForArabic(word);
-    if (match != null) return match;
-  }
+  // الجملة كاملة أول، حتى "دراجة نارية" ما تنقرا "دراجة" بس.
   return englishLabelForArabic(words.join(' '));
 }

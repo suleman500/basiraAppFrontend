@@ -1,4 +1,4 @@
-﻿name: projctlitudei
+name: projctlitudei
 description: "A new Flutter projectGudei."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -76,7 +76,6 @@ dependencies:
   uuid: ^4.6.0
   sensors_plus: ^7.1.0
   arabic_search: ^0.2.3
-
 dev_dependencies:
   flutter_test:
     sdk: flutter

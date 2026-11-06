@@ -35,6 +35,11 @@ class ObjectMemoryRecord {
   final DateTime lastSeenAt;
   final ObjectStatus status;
 
+  /// الاتجاه المطلق للجسم بالراديان (0 = شمال، يزداد باتجاه عقارب الساعة)
+  /// وقت آخر رصد له — يحسبه الجيروسكوب/البوصلة + موقعه الأفقي بالصورة.
+  /// null للسجلات القديمة المحفوظة قبل إضافة هذه الميزة.
+  final double? bearing;
+
   const ObjectMemoryRecord({
     required this.id,
     required this.label,
@@ -44,6 +49,7 @@ class ObjectMemoryRecord {
     required this.distance,
     required this.lastSeenAt,
     required this.status,
+    this.bearing,
   });
 
   /// وصف الاتجاه بالعربي بالنسبة للمستخدم (نفس صيغة السيناريو المتفق
@@ -76,6 +82,7 @@ class _MemoryEntry {
   VerticalPosition verticalPosition;
   double? distance;
   ObjectStatus status;
+  double? bearing;
 
   _MemoryEntry({
     required this.id,
@@ -88,6 +95,7 @@ class _MemoryEntry {
     this.verticalPosition = VerticalPosition.middle,
     this.distance,
     this.status = ObjectStatus.active,
+    this.bearing,
   });
 
   ObjectMemoryRecord toRecord() {
@@ -100,6 +108,7 @@ class _MemoryEntry {
       distance: distance,
       lastSeenAt: DateTime.fromMillisecondsSinceEpoch(lastSeen),
       status: status,
+      bearing: bearing,
     );
   }
 
@@ -115,6 +124,7 @@ class _MemoryEntry {
       'verticalPosition': verticalPosition.name,
       'distance': distance,
       'status': status.name,
+      'bearing': bearing,
     };
   }
 
@@ -143,6 +153,7 @@ class _MemoryEntry {
             (v) => v.name == json['status'],
         orElse: () => ObjectStatus.active,
       ),
+      bearing: (json['bearing'] as num?)?.toDouble(),
     );
   }
 }
@@ -159,6 +170,10 @@ class ObjectMemoryMatch {
 
 class ObjectMemoryService {
   static const int _gridSize = 6;
+
+  /// زاوية رؤية الكاميرا الأفقية التقريبية (راديان ≈ 55°) بالوضع العمودي —
+  /// تُستخدم لتحويل موقع الجسم أفقيًا بالصورة إلى زاوية حقيقية.
+  static const double cameraHorizontalFov = 0.96;
 
   final List<_MemoryEntry> _entries = [];
 
@@ -325,6 +340,7 @@ class ObjectMemoryService {
     required int fullHeight,
     double confidence = 0.0,
     double? distance,
+    double? headingRadians,
   }) async {
     if (!_initialized) {
       await init();
@@ -335,6 +351,16 @@ class ObjectMemoryService {
       fullWidth: fullWidth,
       fullHeight: fullHeight,
     );
+
+    // الاتجاه المطلق للجسم = اتجاه الكاميرا + انحراف الجسم عن مركز الصورة.
+    double? bearing;
+    if (headingRadians != null && fullWidth > 0) {
+      final offset =
+          (box.center.dx / fullWidth - 0.5) * cameraHorizontalFov;
+      const twoPi = 2 * 3.141592653589793;
+      bearing = (headingRadians + offset) % twoPi;
+      if (bearing < 0) bearing += twoPi;
+    }
 
     if (fingerprint.isEmpty) {
       return ObjectMemoryMatch(
@@ -376,6 +402,7 @@ class ObjectMemoryService {
       entry.verticalPosition = position.vertical;
       entry.distance = distance;
       entry.status = ObjectStatus.active;
+      if (bearing != null) entry.bearing = bearing;
 
       // تحديث السجل الموجود يجب أن يستمر على القرص أيضًا، وإلا ستبقى
       // استعلامات الصوت بعد إعادة فتح التطبيق على موقع قديم للجسم.
@@ -403,6 +430,7 @@ class ObjectMemoryService {
         verticalPosition: position.vertical,
         distance: distance,
         status: ObjectStatus.active,
+        bearing: bearing,
       ),
     );
 
@@ -485,6 +513,12 @@ class ObjectMemoryService {
         .where((e) => e.status == ObjectStatus.active)
         .map((e) => e.toRecord())
         .toList();
+  }
+
+  /// كل السجلات المحفوظة (نشطة/مفقودة/مؤرشفة) — تستخدمها صفحة
+  /// الخريطة المكانية (SpatialMapScreen) لرسم الأجسام.
+  List<ObjectMemoryRecord> get allRecords {
+    return _entries.map((e) => e.toRecord()).toList();
   }
 
   double _fingerprintDistance(

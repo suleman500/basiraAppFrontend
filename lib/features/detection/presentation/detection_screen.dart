@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:projctlitudei/core/theme/app_colors.dart';
 
 import '../../../core/constants.dart';
 import '../../voice/data/labels_ar.dart';
@@ -35,7 +36,8 @@ import '../services/ai_response_speaker.dart';
 import '../services/object_summary.dart';
 import 'widgets/bounding_box_painter.dart';
 import 'widgets/hand_skeleton_painter.dart';
-import 'widgets/detection_chips_bar.dart';
+import 'widgets/hud_widgets.dart';
+import 'spatial_map_screen.dart';
 import '../services/object_memory_service.dart';
 import '../../training/presentation/training_screen.dart';
 
@@ -63,34 +65,49 @@ class _DetectionScreenState extends State<DetectionScreen>
       : DetectorService();
   final DepthService _depth = DepthService();
   final VoiceAnnouncer _voice = VoiceAnnouncer(
-    engine: AppConstants.useSherpaTts ? SherpaTtsAdapter() : FlutterTtsAdapter(),
+    engine: AppConstants.useSherpaTts
+        ? SherpaTtsAdapter()
+        : FlutterTtsAdapter(),
   );
   final GyroscopeService _gyro = GyroscopeService();
   final HandTrackerService _handTracker = HandTrackerService();
   late final SpeechService _speech = SpeechService(onText: _onSpeechText);
 
   // ⚠️ طبقة الـAI الاختيارية — الثلاث كائنات هون بيتشاركوا نفس
+
   // AiBackendClient (نفس الإعدادات: عنوان + مفتاح)، بس كل وحدة
+
   // مسؤولة عن مهمة مختلفة تمامًا (راجع تعليقات كل ملف): تصنيف نية
+
   // (Fallback لما الفهم المحلي يفشل) مقابل صياغة رد (بعد ما نعرف
+
   // شو الأمر وعنا بيانات أجسام). لا شي هون بيعمل أي اتصال فعلي إلا
+
   // لو AppConstants.aiBackendEnabled = true — القيمة الافتراضية false
+
   // فتشغيل التطبيق بدون تعديل أي شي يبقى محليًا بالكامل زي ما هو.
+
   late final AiBackendClient _aiClient = AiBackendClient(
     AiBackendConfig(
       baseUrl: AppConstants.aiBackendBaseUrl,
       apiKey: AppConstants.aiBackendApiKey,
     ),
   );
-  late final AiCommandRewriter _aiCommandRewriter =
-  AiCommandRewriter(_aiClient);
-  late final AiResponseComposer _aiResponseComposer =
-  AiResponseComposer(_aiClient);
+  late final AiCommandRewriter _aiCommandRewriter = AiCommandRewriter(
+    _aiClient,
+  );
+  late final AiResponseComposer _aiResponseComposer = AiResponseComposer(
+    _aiClient,
+  );
 
   /// ⚠️ مشغّل صوت مخصّص للردود الجاهزة من السحابة (MP3 base64 من
+  ///
   /// compose-and-speak) — منفصل تمامًا عن TtsAdapter المحلي
+  ///
   /// (FlutterTtsAdapter/SherpaTtsAdapter داخل VoiceAnnouncer)، لأنه
+  /// 
   /// هون بنشغّل ملف صوت جاهز، مو "ننطق نص" عبر محرك تحويل نص→كلام.
+  ///
   final AudioPlayer _cloudAudioPlayer = AudioPlayer();
 
   late final ProximityAnnouncer _proximityAnnouncer = ProximityAnnouncer(
@@ -104,21 +121,13 @@ class _DetectionScreenState extends State<DetectionScreen>
   int _micGestureId = 0;
   String _recognizedSpeechText = '';
 
-  /// ⚠️ إظهار الأزرار اليدوية (تشغيل/إيقاف الكشف، مسافة، مساحة فاضية،
-  /// اختيار جسم للتوجيه) — مخفية افتراضيًا حتى بوضع kDebugMode نفسه،
-  /// ولازم ضغطة صريحة على زر التصحيح الصغير بالشريط العلوي حتى تظهر.
-  /// التطبيق مصمَّم صوتيًا بالكامل للمستخدم النهائي (كفيف)؛ هاي بس
-  /// وسيلة اختبار سريعة للمطوّر أثناء التطوير، وما بتظهر أبدًا بنسخة
-  /// الإنتاج (release) بفضل شرط kDebugMode اللي بيلف حولها بكل مكان.
-  bool _debugControlsVisible = false;
-
-  /// ⚠️ true لو إحنا (مو المستخدم من زر التصحيح) اللي فتحنا البث
+  /// ⚠️ true لو إحنا (مو المستخدم من زر الكشف الحي) اللي فتحنا البث
   /// المستمر عشان أمر صوتي "بدي أروح لـ..." — بعكس دفعة الكاميرا
   /// القصيرة (_performBurstScan) اللي بتقفل نفسها لحالها، التوجيه
   /// محتاج بث مستمر طول فترة المشي، فما نقدر نستخدم نفس آلية القفل
   /// التلقائي. نستخدم هالعلم لنعرف: لما التوجيه ينتهي (وصول أو إلغاء)،
-  /// هل نحن المسؤولين عن قفل الكاميرا، ولا كانت شغّالة أصلًا (وضع
-  /// تصحيح مثلًا) وما لازم نلمسها.
+  /// هل نحن المسؤولين عن قفل الكاميرا، ولا كانت شغّالة أصلًا (المستخدم
+  /// شغّلها بنفسه) وما لازم نلمسها.
   bool _weStartedCameraForNavigation = false;
 
   /// ⚠️ سؤال توضيح صوتي معلّق ("أي كرسي؟") — null يعني ما في سؤال
@@ -226,7 +235,7 @@ class _DetectionScreenState extends State<DetectionScreen>
       } catch (e) {
         debugPrint(
           'تعذّر تحميل موديل العمق (سيعمل التطبيق بدون قياس '
-              'المسافة لغاية إضافة الملف): $e',
+          'المسافة لغاية إضافة الملف): $e',
         );
       }
 
@@ -376,8 +385,8 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// كشف + عمق عند الطلب + تحديث ذاكرة)، بتستنى مدة قصيرة، وبعدين
   /// توقف البث لو هي اللي بدأته.
   ///
-  /// ⚠️ لو _isRunning كان شغّال أصلًا (مثلاً المطوّر فعّل الوضع اليدوي
-  /// من زر التصحيح 🐛)، ما منلمسه — منسيب الوضع الحالي زي ما هو،
+  /// ⚠️ لو _isRunning كان شغّال أصلًا (مثلاً المستخدم شغّل الكشف الحي
+  /// بنفسه)، ما منلمسه — منسيب الوضع الحالي زي ما هو،
   /// ومنستنى بس مدة الدفعة، بدون ما نطفي شي المستخدم شغّله بنفسه.
   ///
   /// ⚠️ عمدًا ما بتعمل reset لـ_detections أو الذاكرة بعد ما تخلص
@@ -385,16 +394,14 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// نتيجة كشف متاحة فورًا للمستدعي (لصياغة الرد، أو لـobject_summary
   /// لو الـAI مفعّل)، والذاكرة أصلًا دايمة (ObjectMemoryService) وما
   /// إلها علاقة بحالة الكاميرا.
-  Future<void> _performBurstScan({
-    Duration? duration,
-  }) async {
+  Future<void> _performBurstScan({Duration? duration}) async {
     if (_camera.controller == null ||
         !_camera.controller!.value.isInitialized) {
       return;
     }
 
     // ⚠️ لو فيه عملية تانية عالبث شغّالة أصلًا (مثلاً المستخدم ضغط
-    // زر التصحيح 🐛 بنفس اللحظة)، منتجاهل الطلب بهدوء بدل ما نخاطر
+    // زر الكشف الحي بنفس اللحظة)، منتجاهل الطلب بهدوء بدل ما نخاطر
     // بتصادم — الأمر الصوتي وقتها بيرد بمعلومة قديمة من الذاكرة
     // (أفضل من كاميرا معلّقة).
     if (_camera.isBusy) {
@@ -488,7 +495,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       debugPrint(
         '⏱️ إطار: تحويل=${convertMs}ms، كشف+فك تشفير=${detectMs}ms، '
-            'إجمالي حتى الآن=${frameStopwatch.elapsedMilliseconds}ms',
+        'إجمالي حتى الآن=${frameStopwatch.elapsedMilliseconds}ms',
       );
 
       final List<HandLandmark> handLandmarks;
@@ -527,12 +534,13 @@ class _DetectionScreenState extends State<DetectionScreen>
         if (newDepthMap != null) {
           _lastDepthMap = newDepthMap;
 
-          final newProximityLabels = await _proximityAnnouncer.announceProximity(
-            detectedObjects,
-            newDepthMap,
-            fullWidth: fullWidth,
-            fullHeight: fullHeight,
-          );
+          final newProximityLabels = await _proximityAnnouncer
+              .announceProximity(
+                detectedObjects,
+                newDepthMap,
+                fullWidth: fullWidth,
+                fullHeight: fullHeight,
+              );
 
           if (newProximityLabels != null && mounted) {
             setState(() {
@@ -569,7 +577,9 @@ class _DetectionScreenState extends State<DetectionScreen>
         final freeSpaceFrame = await compute(convertCameraFrame, freeSpaceJob);
 
         if (_depth.isFrameLikelyBlocked(freeSpaceFrame.rgbBytes)) {
-          _voice.speakNow('الكاميرا يبدو أنها مغطاة، امسح العدسة وجرب مرة ثانية');
+          _voice.speakNow(
+            'الكاميرا يبدو أنها مغطاة، امسح العدسة وجرب مرة ثانية',
+          );
         } else {
           final freeSpaceDepthMap = await _depth.predict(freeSpaceFrame);
 
@@ -604,7 +614,7 @@ class _DetectionScreenState extends State<DetectionScreen>
                 fullWidth: fullWidth,
                 fullHeight: fullHeight,
               ) ??
-                  object.distance;
+              object.distance;
         }
 
         String? memoryId;
@@ -625,6 +635,7 @@ class _DetectionScreenState extends State<DetectionScreen>
             fullHeight: fullHeight,
             confidence: object.confidence,
             distance: distance,
+            headingRadians: _gyro.hasHeading ? _gyro.heading : null,
           );
 
           memoryId = memoryMatch.id;
@@ -715,7 +726,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       debugPrint(
         '⏱️ إجمالي معالجة الإطار كامل: '
-            '${frameStopwatch.elapsedMilliseconds}ms',
+        '${frameStopwatch.elapsedMilliseconds}ms',
       );
     } catch (e) {
       debugPrint('Frame processing error: $e');
@@ -751,33 +762,47 @@ class _DetectionScreenState extends State<DetectionScreen>
 
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.black87,
+      backgroundColor: AppColors.surface,
       builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text(
-                  'اختر الجسم اللي تريد تتوجّه نحوه',
-                  style: TextStyle(color: Colors.white, fontSize: 14),
-                ),
-              ),
-              ...entries.map((entry) {
-                return ListTile(
-                  leading: const Icon(Icons.near_me, color: Colors.blueAccent),
-                  title: Text(
-                    entry.$1,
-                    style: const TextStyle(color: Colors.white),
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'اختر الجسم اللي تريد تتوجّه نحوه',
+                    style: TextStyle(
+                      color: AppColors.onSurface,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _startNavigation(entry.$2);
-                  },
-                );
-              }),
-            ],
+                ),
+                ...entries.map((entry) {
+                  return ListTile(
+                    minTileHeight: 60,
+                    leading: const Icon(
+                      Icons.near_me,
+                      color: AppColors.primary,
+                    ),
+                    title: Text(
+                      entry.$1,
+                      style: const TextStyle(
+                        color: AppColors.onSurface,
+                        fontSize: 16,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _startNavigation(entry.$2);
+                    },
+                  );
+                }),
+              ],
+            ),
           ),
         );
       },
@@ -842,8 +867,9 @@ class _DetectionScreenState extends State<DetectionScreen>
     // البث بعدها (التوجيه محتاجه مستمر).
     await Future.delayed(AppConstants.voiceBurstScanDuration);
 
-    final matches =
-    _detections.where((obj) => obj.label == englishLabel).toList();
+    final matches = _detections
+        .where((obj) => obj.label == englishLabel)
+        .toList();
 
     if (matches.isEmpty) {
       _voice.speakNow('مش قادر ألقى $arabicLabel حاليًا');
@@ -878,12 +904,12 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (sorted.length == 2) {
       _voice.speakNow(
         'لقيت أكتر من $arabicLabel، وحدة على يسارك ووحدة على '
-            'يمينك — أي وحدة تقصد؟',
+        'يمينك — أي وحدة تقصد؟',
       );
     } else {
       _voice.speakNow(
         'لقيت ${sorted.length} من $arabicLabel، قول رقم الوحدة '
-            'من واحد لـ${sorted.length}',
+        'من واحد لـ${sorted.length}',
       );
     }
   }
@@ -905,7 +931,8 @@ class _DetectionScreenState extends State<DetectionScreen>
     if (pending.candidates.length == 2) {
       // candidates مرتّبة يسار→يمين (نفس ترتيب _openObjectPicker).
       final saysRight = normalized.contains(normalizeArabicText('يمين'));
-      final saysLeft = normalized.contains(normalizeArabicText('يسار')) ||
+      final saysLeft =
+          normalized.contains(normalizeArabicText('يسار')) ||
           normalized.contains(normalizeArabicText('شمال'));
 
       if (saysRight && !saysLeft) {
@@ -932,9 +959,7 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       for (final word in normalized.split(' ')) {
         final index = int.tryParse(word) ?? numberWords[word];
-        if (index != null &&
-            index >= 1 &&
-            index <= pending.candidates.length) {
+        if (index != null && index >= 1 && index <= pending.candidates.length) {
           chosen = pending.candidates[index - 1];
           break;
         }
@@ -968,9 +993,9 @@ class _DetectionScreenState extends State<DetectionScreen>
     _stopCameraIfWeStartedItForNavigation();
   }
 
-  /// يقفل بث الكاميرا لو إحنا (مو المستخدم من زر التصحيح) اللي
+  /// يقفل بث الكاميرا لو إحنا (مو المستخدم من زر الكشف الحي) اللي
   /// فتحناه لأجل أمر "بدي أروح لـ..." — يُستدعى بعد وصول أو إلغاء
-  /// التوجيه. لو الكاميرا كانت شغّالة أصلًا لسبب تاني (وضع تصحيح)،
+  /// التوجيه. لو الكاميرا كانت شغّالة أصلًا لسبب تاني،
   /// ما بنلمسها ونسيبها متل ما كانت.
   Future<void> _stopCameraIfWeStartedItForNavigation() async {
     if (!_weStartedCameraForNavigation) return;
@@ -992,12 +1017,15 @@ class _DetectionScreenState extends State<DetectionScreen>
   /// الهدف (قفل كاميرا) — كل منطق التتبّع/النطق نفسه صار جوا
   /// NavigationController.handleFrame.
   Future<void> _handleNavigation(
-      List<DetectedObject> currentDetections,
-      int fullWidth,
-      int fullHeight,
-      ) async {
-    final outcome =
-    await _navigation.handleFrame(currentDetections, fullWidth, fullHeight);
+    List<DetectedObject> currentDetections,
+    int fullWidth,
+    int fullHeight,
+  ) async {
+    final outcome = await _navigation.handleFrame(
+      currentDetections,
+      fullWidth,
+      fullHeight,
+    );
 
     if (outcome == NavigationTick.arrived) {
       if (mounted) setState(() {});
@@ -1107,7 +1135,7 @@ class _DetectionScreenState extends State<DetectionScreen>
         if (rewrittenCommand is! UnknownCommand) {
           debugPrint(
             '🤖 الباك-اند أعاد صياغة الأمر: "$recognizedText" → '
-                '"$rewrittenText"',
+            '"$rewrittenText"',
           );
           command = rewrittenCommand;
         }
@@ -1227,6 +1255,8 @@ class _DetectionScreenState extends State<DetectionScreen>
         final localSentence = active
             .map((r) => '${toArabicLabel(r.label)} ${r.arabicDirection}')
             .join('، ');
+        debugPrint('📝 شو قدامي: active=${active.length}, '
+            'detectionsNow=${_detections.length}, sentence="$localSentence"');
 
         if (await _trySpeakViaAi(localSentence)) return;
 
@@ -1294,7 +1324,7 @@ class _DetectionScreenState extends State<DetectionScreen>
     );
 
     final composed = await _aiResponseComposer.compose(
-      rawText: _recognizedSpeechText,
+      rawText: localSentence, // الجملة الجاهزة من التطبيق، مش كلام المستخدم
       objects: summaries,
     );
 
@@ -1352,16 +1382,11 @@ class _DetectionScreenState extends State<DetectionScreen>
 
       await _cloudAudioPlayer.stop();
 
-      await _cloudAudioPlayer.play(
-        BytesSource(
-          bytes,
-          mimeType: 'audio/mpeg',
-        ),
-      );
+      await _cloudAudioPlayer.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
 
       debugPrint(
         '🔊 تم تشغيل الصوت الخارجي بنجاح '
-            '(${bytes.length} bytes)',
+        '(${bytes.length} bytes)',
       );
 
       return true;
@@ -1369,6 +1394,12 @@ class _DetectionScreenState extends State<DetectionScreen>
       debugPrint('⚠️ فشل تشغيل صوت السحابة: $e');
       return false;
     }
+  }
+
+  /// يُستدعى من صفحة الخريطة: تشغيل/إيقاف الكشف اللحظي من هناك.
+  Future<void> _setLiveFromMap(bool live) async {
+    if (live == _isRunning) return;
+    await _toggleDetection();
   }
 
   void _requestFreeSpaceCheck() {
@@ -1416,18 +1447,28 @@ class _DetectionScreenState extends State<DetectionScreen>
   @override
   Widget build(BuildContext context) {
     if (_isInitializing) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
     }
 
     if (_error != null) {
       return Scaffold(
+        backgroundColor: AppColors.background,
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Text(
               _error!,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.red),
+              style: const TextStyle(
+                color: AppColors.error,
+                fontSize: 17,
+                height: 1.5,
+              ),
             ),
           ),
         ),
@@ -1437,270 +1478,258 @@ class _DetectionScreenState extends State<DetectionScreen>
     final controller = _camera.controller;
 
     if (controller == null || !controller.value.isInitialized) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black87),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Container(
-              color: Colors.black87,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Text(
-                    _isRunning ? 'الكشف يعمل' : 'متوقف',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: _toggleVoice,
-                    icon: Icon(
-                      _voice.enabled ? Icons.volume_up : Icons.volume_off,
-                      color: Colors.white,
-                    ),
-                    tooltip: _voice.enabled ? 'كتم الصوت' : 'تفعيل الصوت',
-                  ),
-                  TextButton.icon(
-                    onPressed: _toggleLanguage,
-                    icon: const Icon(Icons.translate, color: Colors.white),
-                    label: Text(
-                      _voice.language == SpeechLanguage.arabic ? 'AR' : 'EN',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _clearMemory,
-                    icon: const Icon(Icons.delete_sweep, color: Colors.white),
-                    tooltip: 'مسح ذاكرة الأجسام',
-                  ),
-                  IconButton(
-                    onPressed: widget.cameras.length > 1 ? _switchCamera : null,
-                    icon: const Icon(Icons.cameraswitch, color: Colors.white),
-                  ),
-                  // ⚠️ زر تصحيح للمطوّر فقط — ما يظهر إطلاقًا بنسخة
-                  // الإنتاج (release) بفضل شرط kDebugMode. ضغطة عليه
-                  // تبدّل ظهور/إخفاء الأزرار اليدوية (تشغيل/إيقاف،
-                  // مسافة، مساحة فاضية، اختيار جسم للتوجيه) بالأسفل.
-                  // افتراضيًا مخفية حتى بوضع التطوير — لازم ضغطة صريحة.
-                  if (kDebugMode)
-                    IconButton(
-                      onPressed: () {
-                        setState(() {
-                          _debugControlsVisible = !_debugControlsVisible;
-                        });
-                      },
-                      icon: Icon(
-                        _debugControlsVisible
-                            ? Icons.bug_report
-                            : Icons.bug_report_outlined,
-                        color:
-                        _debugControlsVisible ? Colors.amber : Colors.white54,
-                      ),
-                      tooltip: _debugControlsVisible
-                          ? 'إخفاء أزرار المطوّر اليدوية'
-                          : 'إظهار أزرار المطوّر اليدوية (تطوير فقط)',
-                    ),
-                ],
+    // الواجهة عربية: نفرض RTL على الشاشة كلها.
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // ===== الشريط العلوي =====
+              HudTopBar(
+                voiceEnabled: _voice.enabled,
+                languageLabel: _voice.language == SpeechLanguage.arabic
+                    ? 'AR'
+                    : 'EN',
+                canSwitchCamera: widget.cameras.length > 1,
+                onBack: () => Navigator.of(context).maybePop(),
+                onToggleVoice: _toggleVoice,
+                onToggleLanguage: _toggleLanguage,
+                onSwitchCamera: _switchCamera,
+                onClearMemory: _clearMemory,
               ),
-            ),
-            Expanded(
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 1 / controller.value.aspectRatio,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (AppConstants.showCameraPreviewForDebug)
-                        CameraPreview(controller)
-                      else
-                        Container(color: Colors.black),
-                      ValueListenableBuilder<List<DetectedObject>>(
-                        valueListenable: _boxAnimation.animatedDetections,
-                        builder: (context, animatedList, _) {
-                          return CustomPaint(
-                            painter: BoundingBoxPainter(
-                              detections: animatedList,
-                              imageWidth: _imageWidth,
-                              imageHeight: _imageHeight,
-                              labelTranslator: toArabicLabel,
-                              proximityLabels: _proximityLabels,
-                              touchedKey: _touchedObjectKey,
+
+              // ===== إطار الكاميرا =====
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceLowest,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppColors.glassBorder),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Center(
+                          child: AspectRatio(
+                            aspectRatio: 1 / controller.value.aspectRatio,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                if (AppConstants.showCameraPreviewForDebug)
+                                  CameraPreview(controller)
+                                else
+                                  Container(color: AppColors.surfaceLowest),
+                                ValueListenableBuilder<List<DetectedObject>>(
+                                  valueListenable:
+                                      _boxAnimation.animatedDetections,
+                                  builder: (context, animatedList, _) {
+                                    return CustomPaint(
+                                      painter: BoundingBoxPainter(
+                                        detections: animatedList,
+                                        imageWidth: _imageWidth,
+                                        imageHeight: _imageHeight,
+                                        labelTranslator: toArabicLabel,
+                                        proximityLabels: _proximityLabels,
+                                        touchedKey: _touchedObjectKey,
+                                      ),
+                                    );
+                                  },
+                                ),
+                                ValueListenableBuilder<List<HandLandmark>>(
+                                  valueListenable:
+                                      _boxAnimation.animatedHandPoints,
+                                  builder: (context, animatedHandPoints, _) {
+                                    return CustomPaint(
+                                      painter: HandSkeletonPainter(
+                                        landmarks: animatedHandPoints,
+                                        imageWidth: _imageWidth,
+                                        imageHeight: _imageHeight,
+                                        isFist: _isFistForDisplay,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
-                          );
-                        },
-                      ),
-                      ValueListenableBuilder<List<HandLandmark>>(
-                        valueListenable: _boxAnimation.animatedHandPoints,
-                        builder: (context, animatedHandPoints, _) {
-                          return CustomPaint(
-                            painter: HandSkeletonPainter(
-                              landmarks: animatedHandPoints,
-                              imageWidth: _imageWidth,
-                              imageHeight: _imageHeight,
-                              isFist: _isFistForDisplay,
+                          ),
+                        ),
+
+                        // شارات الحالة أعلى الإطار
+                        PositionedDirectional(
+                          top: 12,
+                          start: 12,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              HudStatusPill(
+                                label: _isRunning ? 'الكشف يعمل' : 'متوقف',
+                                color: _isRunning
+                                    ? AppColors.primary
+                                    : AppColors.onSurfaceVariant,
+                              ),
+                              if (_isNavigating) ...[
+                                const SizedBox(width: 8),
+                                const HudStatusPill(
+                                  label: 'التوجيه شغّال',
+                                  color: AppColors.tertiary,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+
+                        // زر فتح خريطة الأجسام (الرادار)
+                        PositionedDirectional(
+                          top: 8,
+                          end: 8,
+                          child: HudIconButton(
+                            icon: Icons.radar,
+                            tooltip: 'خريطة الأجسام',
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => SpatialMapScreen(
+                                    memory: memory,
+                                    gyro: _gyro,
+                                    initialLive: _isRunning,
+                                    isLive: () => _isRunning,
+                                    onLiveChanged: _setLiveFromMap,
+                                    onSpeak: (text) => _voice.speakNow(text),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+
+                        // تلميح حين لا يوجد كشف
+                        if (!_isRunning && _detections.isEmpty)
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text(
+                                'اضغط «الكشف الحي» للبدء،\nأو اضغط مطوّلًا على المايك واسأل بصوتك',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppColors.onSurfaceVariant,
+                                  fontSize: 15,
+                                  height: 1.6,
+                                ),
+                              ),
                             ),
-                          );
-                        },
-                      ),
-                    ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            DetectionChipsBar(
-              detections: _detections,
-              labelTranslator: toArabicLabel,
-              proximityLabels: _proximityLabels,
-            ),
-            if (_recognizedSpeechText.isNotEmpty || _isListeningForCommand)
-              Container(
-                width: double.infinity,
-                constraints: const BoxConstraints(minHeight: 38, maxHeight: 72),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 7,
+
+              // ===== الأجسام المرصودة =====
+              HudObjectsRow(
+                detections: _detections,
+                labelTranslator: toArabicLabel,
+                proximityLabels: _proximityLabels,
+                touchedKey: _touchedObjectKey,
+              ),
+
+              // ===== لوحة الأمر الصوتي =====
+              if (_recognizedSpeechText.isNotEmpty || _isListeningForCommand)
+                HudVoicePanel(
+                  isListening: _isListeningForCommand,
+                  text: _recognizedSpeechText,
                 ),
-                color: Colors.blueGrey.shade900,
+
+              // ===== بلاطات الإجراءات =====
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Row(
-                  textDirection: TextDirection.rtl,
                   children: [
-                    Icon(
-                      _isListeningForCommand
-                          ? Icons.mic
-                          : Icons.record_voice_over,
-                      size: 18,
-                      color: _isListeningForCommand
-                          ? Colors.redAccent
-                          : Colors.tealAccent,
+                    Expanded(
+                      child: HudActionTile(
+                        icon: _isRunning
+                            ? Icons.visibility
+                            : Icons.visibility_off_outlined,
+                        label: 'الكشف الحي',
+                        subtitle: _isRunning ? 'نشط' : 'متوقف',
+                        active: _isRunning,
+                        onPressed: _toggleDetection,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        _recognizedSpeechText.isEmpty
-                            ? 'استمع...'
-                            : _recognizedSpeechText,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.right,
-                        textDirection: TextDirection.rtl,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                        ),
+                      child: HudActionTile(
+                        icon: Icons.straighten,
+                        label: 'قياس العمق',
+                        subtitle: 'المسافة',
+                        loading: _isMeasuringDistance,
+                        dimmed: !_isRunning,
+                        onPressed: _isMeasuringDistance
+                            ? () {}
+                            : _requestDistance,
                       ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: HudActionTile(
+                        icon: Icons.directions_walk,
+                        label: 'مساحة المشي',
+                        subtitle: 'هل أقدر أمشي؟',
+                        loading: _isCheckingFreeSpace,
+                        dimmed: !_isRunning,
+                        onPressed: _isCheckingFreeSpace
+                            ? () {}
+                            : _requestFreeSpaceCheck,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _isNavigating
+                          ? HudActionTile(
+                              icon: Icons.close,
+                              label: 'إلغاء التوجيه',
+                              warning: true,
+                              onPressed: _cancelNavigation,
+                            )
+                          : HudActionTile(
+                              icon: Icons.near_me,
+                              label: 'وجّهني',
+                              subtitle: 'نحو جسم',
+                              dimmed: _detections.isEmpty,
+                              onPressed: _openObjectPicker,
+                            ),
                     ),
                   ],
                 ),
               ),
-          ],
+
+              // ===== زر المايك =====
+              if (AppConstants.voiceCommandsEnabled)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: HudMicButton(
+                    isListening: _isListeningForCommand,
+                    isAvailable: _speech.isAvailable,
+                    onPressDown: () => _onMicPressDown(),
+                    onPressUp: () => _onMicPressUp(),
+                    onPressCancel: () => _onMicPressCancel(),
+                  ),
+                ),
+            ],
+          ),
         ),
-      ),
-      // ⚠️ إعادة هيكلة رئيسية: الأزرار اليدوية كلها (تشغيل/إيقاف،
-      // مسافة، مساحة فاضية، اختيار جسم للتوجيه) صارت محصورة بشرط
-      // (kDebugMode && _debugControlsVisible) — يعني مخفية بالكامل
-      // بنسخة الإنتاج، ومخفية افتراضيًا حتى بوضع التطوير لحد ما
-      // تضغط زر التصحيح بالشريط العلوي. زر المايك الصوتي وحده يبقى
-      // ظاهر دائمًا — هو المتحكم الرئيسي بالتطبيق من هلق وصاعد.
-      //
-      // ⚠️⚠️ تنبيه هام لمرحلة التطوير الحالية: لحد ما نبني "دفعة
-      // الكاميرا القصيرة" (Phase 2 من الخطة المتفق عليها)، ما في أي
-      // طريقة تانية تشغّل الكاميرا غير toggle_fab هون. يعني لو بنيت
-      // نسخة release الآن، أو نسيت تفعّل _debugControlsVisible وانت
-      // بتجرب، التطبيق ما رح يقدر يفتح الكاميرا إطلاقًا — هذا متوقع
-      // بمرحلة انتقالية، مو خطأ بالكود.
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          if (kDebugMode && _debugControlsVisible) ...[
-            if (_isRunning && _isNavigating) ...[
-              FloatingActionButton(
-                heroTag: 'cancel_nav_fab',
-                onPressed: _cancelNavigation,
-                backgroundColor: Colors.orange,
-                tooltip: 'إلغاء التوجيه',
-                child: const Icon(Icons.close),
-              ),
-              const SizedBox(width: 12),
-            ] else if (_isRunning && _detections.isNotEmpty) ...[
-              FloatingActionButton(
-                heroTag: 'navigate_fab',
-                onPressed: _openObjectPicker,
-                backgroundColor: Colors.purpleAccent,
-                tooltip: 'توجّهني نحو شيء',
-                child: const Icon(Icons.near_me),
-              ),
-              const SizedBox(width: 12),
-            ],
-          ],
-          if (AppConstants.voiceCommandsEnabled) ...[
-            Listener(
-              onPointerDown: (_) => _onMicPressDown(),
-              onPointerUp: (_) => _onMicPressUp(),
-              onPointerCancel: (_) => _onMicPressCancel(),
-              child: FloatingActionButton(
-                heroTag: 'voice_command_fab',
-                onPressed: () {},
-                backgroundColor: _isListeningForCommand
-                    ? Colors.redAccent
-                    : (_speech.isAvailable ? Colors.teal : Colors.grey),
-                tooltip: 'اضغط مطوّلًا واسأل بصوتك',
-                child: const Icon(Icons.mic, color: Colors.white),
-              ),
-            ),
-            const SizedBox(width: 12),
-          ],
-          if (kDebugMode && _debugControlsVisible) ...[
-            if (_isRunning) ...[
-              FloatingActionButton(
-                heroTag: 'free_space_fab',
-                onPressed: _isCheckingFreeSpace ? null : _requestFreeSpaceCheck,
-                backgroundColor: _depth.isReady ? Colors.green : Colors.grey,
-                tooltip: 'هل أقدر أمشي؟',
-                child: _isCheckingFreeSpace
-                    ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-                    : const Icon(Icons.directions_walk),
-              ),
-              const SizedBox(width: 12),
-            ],
-            if (_isRunning) ...[
-              FloatingActionButton(
-                heroTag: 'distance_fab',
-                onPressed: _isMeasuringDistance ? null : _requestDistance,
-                backgroundColor:
-                _depth.isReady ? Colors.blueAccent : Colors.grey,
-                tooltip: 'ما المسافة؟',
-                child: _isMeasuringDistance
-                    ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-                    : const Icon(Icons.straighten),
-              ),
-              const SizedBox(width: 12),
-            ],
-            FloatingActionButton(
-              heroTag: 'toggle_fab',
-              onPressed: _toggleDetection,
-              backgroundColor: _isRunning ? Colors.red : Colors.green,
-              child: Icon(_isRunning ? Icons.stop : Icons.play_arrow),
-            ),
-          ],
-        ],
       ),
     );
   }
